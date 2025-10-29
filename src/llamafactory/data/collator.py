@@ -293,6 +293,7 @@ class MemoryDataCollator(DataCollatorForSeq2Seq):
             batch_memory_attention_mask.append(memory_attention_mask)
 
         # Call parent collator to process text inputs (no multimodal)
+        all_task_types = [f.pop("task_type", "_") for f in features]
         batch_features = super().__call__(features)
 
         # Apply 4D attention mask if needed
@@ -368,6 +369,7 @@ class MemoryDataCollator(DataCollatorForSeq2Seq):
         batch_features["memory_attention_mask"] = batched_memory_attention_mask
         # from utils import wait_for_debugger
         # wait_for_debugger()
+        batch_features["task_type"] = all_task_types
         return batch_features
 
 
