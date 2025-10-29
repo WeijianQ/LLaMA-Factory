@@ -318,6 +318,10 @@ def init_adapter(
         _setup_full_tuning(model, finetuning_args, is_trainable, cast_trainable_params_to_fp32)
     elif finetuning_args.finetuning_type == "freeze":
         _setup_freeze_tuning(model, finetuning_args, is_trainable, cast_trainable_params_to_fp32)
+    elif finetuning_args.finetuning_type == "freeze_llm_for_memory":
+        _setup_freeze_tuning_llm_for_memory(
+            model, finetuning_args, is_trainable, cast_trainable_params_to_fp32
+        )
     elif finetuning_args.finetuning_type in ["lora", "oft"]:
         model = _setup_lora_tuning(
             config, model, model_args, finetuning_args, is_trainable, cast_trainable_params_to_fp32

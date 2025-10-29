@@ -461,7 +461,7 @@ class FinetuningArguments(
         default="sft",
         metadata={"help": "Which stage will be performed in training."},
     )
-    finetuning_type: Literal["lora", "oft", "freeze", "full"] = field(
+    finetuning_type: Literal["lora", "oft", "freeze", "full", "freeze_llm_for_memory"] = field(
         default="lora",
         metadata={"help": "Which fine-tuning method to use."},
     )
@@ -516,6 +516,14 @@ class FinetuningArguments(
     include_effective_tokens_per_second: bool = field(
         default=False,
         metadata={"help": "Whether or not to compute effective tokens per second."},
+    )
+    wandb_project: Optional[str] = field(
+        default="llamafactory",
+        metadata={"help": "The project name in WandB."},
+    )
+    wandb_notes: Optional[str] = field(
+        default=None,
+        metadata={"help": "Notes for the WandB experiment run."},
     )
 
     def __post_init__(self):
