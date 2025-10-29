@@ -350,7 +350,7 @@ class ReporterCallback(TrainerCallback):
         self.data_args = data_args
         self.finetuning_args = finetuning_args
         self.generating_args = generating_args
-        os.environ["WANDB_PROJECT"] = os.getenv("WANDB_PROJECT", "llamafactory")
+        os.environ["WANDB_PROJECT"] = self.finetuning_args.wandb_project
 
     @override
     def on_train_begin(self, args: "TrainingArguments", state: "TrainerState", control: "TrainerControl", **kwargs):
@@ -368,6 +368,10 @@ class ReporterCallback(TrainerCallback):
                     "generating_args": self.generating_args.to_dict(),
                 }
             )
+            
+            # Set notes if provided and wandb.run exists
+            if self.finetuning_args.wandb_notes is not None and wandb.run is not None:
+                wandb.run.notes = self.finetuning_args.wandb_notes
 
         if self.finetuning_args.use_swanlab:
             import swanlab  # type: ignore
