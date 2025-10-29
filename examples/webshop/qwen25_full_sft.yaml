@@ -1,0 +1,46 @@
+### model
+model_name_or_path: WeijianQi1999/Qwen25-1p5B-Memory
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: full
+
+### dataset
+dataset: webshop_train_baseline
+eval_dataset: webshop_val_baseline
+template: qwen
+cutoff_len: 2048
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/qwen25-1p5b-memory/full/webshop_sft
+logging_steps: 10
+save_steps: 500
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: tensorboard
+
+### train
+per_device_train_batch_size: 8
+gradient_accumulation_steps: 32
+train_batch_size: 256
+learning_rate: 5.0e-5
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+
+### eval
+val_size: 0.0
+per_device_eval_batch_size: 16
+eval_strategy: steps
+eval_steps: 50
+
+### wandb
+wandb_project: webshop_sft_using_llamafactory
