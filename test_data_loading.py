@@ -20,11 +20,16 @@ def test_single_dataset(dataset_name, tokenizer_module, template, model_args, da
     print("=" * 80)
     
     # Update data_args with the new dataset name
-    data_args.dataset = dataset_name
+    data_args.dataset = [dataset_name]
     
-    print("\nLoading dataset...")
+    print(f"\nLoading dataset: {dataset_name}...")
     
     # Load dataset
+    if dataset_name == "webshop_val_keep_action_with_cm_proxy_tasks_only":
+        data_args.has_memory = True
+    else:
+        data_args.has_memory = False
+
     dataset_module = get_dataset(
         template=template,
         model_args=model_args,
@@ -68,9 +73,9 @@ def test_single_dataset(dataset_name, tokenizer_module, template, model_args, da
         from llamafactory.data import MemoryDataCollator
         print("Using MemoryDataCollator for memory-augmented data")
         data_collator = MemoryDataCollator(
-            padding='max_length',
+            padding='longest',  # Use 'longest' to pad to batch max, not model max (131072)
             memory_truncate_length=data_args.cutoff_len,
-            pad_to_multiple_of=64,
+            pad_to_multiple_of=8,  # Changed from 64 to match workflow.py
             label_pad_token_id=IGNORE_INDEX,
             **tokenizer_module,
         )
@@ -170,7 +175,13 @@ def print_batch_info(batch, tokenizer, dataset_name):
     
     # Print first few values of first sample's input_ids
     print(f"\nFirst sample input_ids (first 20 tokens): {batch['input_ids'][0][:20].tolist()}")
-    print(f"First sample labels (first 20 tokens): {batch['labels'][0][:20].tolist()}")
+    
+    # print the real labels
+    IGNORE_INDEX = -100
+    # non label_start_ba
+    real_labels = [label for label in batch['labels'][0].tolist() if label != IGNORE_INDEX]
+    print(f"First sample labels (first 20 tokens): {real_labels[:20]}")
+    print(f"decoded labels: {[tokenizer.convert_ids_to_tokens(label) for label in real_labels[:20]]}")
     
     print("\n" + "=" * 80)
 
