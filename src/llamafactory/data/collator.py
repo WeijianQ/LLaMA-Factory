@@ -250,6 +250,7 @@ class SFTDataCollatorWith4DAttentionMask(MultiModalDataCollatorForSeq2Seq):
     compute_dtype: "torch.dtype" = torch.float32
 
     def __call__(self, features: list[dict[str, Any]]) -> dict[str, "torch.Tensor"]:
+        all_task_types = [f.pop("task_type", "_") for f in features]
         features = super().__call__(features)
         if self.block_diag_attn and self.attn_implementation != "flash_attention_2":
             features["attention_mask"] = prepare_4d_attention_mask(features["attention_mask"], self.compute_dtype)
@@ -257,8 +258,117 @@ class SFTDataCollatorWith4DAttentionMask(MultiModalDataCollatorForSeq2Seq):
         for key, value in features.items():  # cast data dtype for paligemma
             if torch.is_tensor(value) and torch.is_floating_point(value):
                 features[key] = value.to(self.compute_dtype)
-
+        features["task_type"] = all_task_types
         return features
+
+
+@dataclass
+class MemoryDataCollator(DataCollatorForSeq2Seq):
+    r"""Data collator for memory-augmented models.
+
+    Handles memory collation and text padding without multimodal features.
+    Memory texts are already encoded in processor stage, here we pad them to uniform shape.
+    """
+    processor: Optional["ProcessorMixin"] = None
+    memory_truncate_length: Optional[int] = None
+    block_diag_attn: bool = False
+    attn_implementation: Literal["eager", "sdpa", "flash_attention_2"] = "eager"
+    compute_dtype: "torch.dtype" = torch.float32
+
+    def __call__(self, features: list[dict[str, Any]]) -> dict[str, "torch.Tensor"]:
+        # Extract memory tensors from features before parent processing
+        batch_memory_input_ids = []
+        batch_memory_attention_mask = []
+
+        for feature in features:
+            memory_input_ids = feature.pop("memory_input_ids", None)
+            memory_attention_mask = feature.pop("memory_attention_mask", None)
+
+            if memory_input_ids is None:
+                memory_input_ids = torch.empty((0, 0), dtype=torch.long)
+            if memory_attention_mask is None:
+                memory_attention_mask = torch.empty((0, 0), dtype=torch.long)
+
+            batch_memory_input_ids.append(memory_input_ids)
+            batch_memory_attention_mask.append(memory_attention_mask)
+
+        # Call parent collator to process text inputs (no multimodal)
+        batch_features = super().__call__(features)
+
+        # Apply 4D attention mask if needed
+        if self.block_diag_attn and self.attn_implementation != "flash_attention_2":
+            batch_features["attention_mask"] = prepare_4d_attention_mask(
+                batch_features["attention_mask"], self.compute_dtype
+            )
+
+        # Cast data dtype
+        for key, value in batch_features.items():
+            if torch.is_tensor(value) and torch.is_floating_point(value):
+                batch_features[key] = value.to(self.compute_dtype)
+
+        # Collate memory tensors to uniform shape
+        # Each memory tensor is [num_memories, mem_len], need to pad to [batch_size, max_num, max_len]
+        max_memory_num = max([len(mem) for mem in batch_memory_input_ids])
+        max_memory_len = max([max([len(m) for m in mem]) if len(mem) > 0 else 0 for mem in batch_memory_input_ids])
+
+        # Apply left truncation if memory_truncate_length is set
+        if self.memory_truncate_length is not None and max_memory_len > self.memory_truncate_length:
+            max_memory_len = self.memory_truncate_length
+
+        if max_memory_num == 0 and max_memory_len == 0:
+            # No memory in this batch
+            batched_memory_input_ids = torch.empty((len(batch_memory_input_ids), 0, 0), dtype=torch.long)
+            batched_memory_attention_mask = torch.empty((len(batch_memory_input_ids), 0, 0), dtype=torch.long)
+        else:
+            # Pad to [batch_size, max_memory_num, max_memory_len]
+            batch_size = len(batch_memory_input_ids)
+            pad_token_id = self.tokenizer.pad_token_id
+
+            batched_memory_input_ids = torch.full(
+                (batch_size, max_memory_num, max_memory_len), pad_token_id, dtype=torch.long
+            )
+            batched_memory_attention_mask = torch.zeros(
+                (batch_size, max_memory_num, max_memory_len), dtype=torch.long
+            )
+
+            for i_batch, (mem_ids_list, mem_mask_list) in enumerate(zip(batch_memory_input_ids, batch_memory_attention_mask)):
+                for i_mem, (mem_ids, mem_mask) in enumerate(zip(mem_ids_list, mem_mask_list)):
+                    memory_length = len(mem_ids)
+
+                    # Apply left truncation: keep the rightmost tokens
+                    if self.memory_truncate_length is not None and memory_length > self.memory_truncate_length:
+                        truncated_input_ids = torch.tensor(mem_ids[:, -self.memory_truncate_length :])
+                        truncated_attention_mask = torch.tensor(mem_mask[:, -self.memory_truncate_length :])
+                        memory_length = self.memory_truncate_length
+                    else:
+                        truncated_input_ids = torch.tensor(mem_ids)
+                        truncated_attention_mask = torch.tensor(mem_mask)
+
+                    # Right-align: place at the end of the padded tensor
+                    batched_memory_input_ids[i_batch, i_mem, -memory_length:] = truncated_input_ids
+                    batched_memory_attention_mask[i_batch, i_mem, -memory_length:] = truncated_attention_mask
+                # memory_num = len(mem_ids_list)
+                # if memory_num > 0:
+                #     memory_length = mem_ids.shape[1]
+
+                #     # Apply left truncation: keep the rightmost tokens
+                #     if self.memory_truncate_length is not None and memory_length > self.memory_truncate_length:
+                #         truncated_input_ids = mem_ids[:, -self.memory_truncate_length :]
+                #         truncated_attention_mask = mem_mask[:, -self.memory_truncate_length :]
+                #         memory_length = self.memory_truncate_length
+                #     else:
+                #         truncated_input_ids = mem_ids
+                #         truncated_attention_mask = mem_mask
+
+                #     # Right-align: place at the end of the padded tensor
+                #     batched_memory_input_ids[i_batch, :memory_num, -memory_length:] = truncated_input_ids
+                #     batched_memory_attention_mask[i_batch, :memory_num, -memory_length:] = truncated_attention_mask
+
+        batch_features["memory_input_ids"] = batched_memory_input_ids
+        batch_features["memory_attention_mask"] = batched_memory_attention_mask
+        # from utils import wait_for_debugger
+        # wait_for_debugger()
+        return batch_features
 
 
 @dataclass

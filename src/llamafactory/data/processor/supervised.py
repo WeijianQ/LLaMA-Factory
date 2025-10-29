@@ -16,6 +16,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
+import torch
+
 from ...extras import logging
 from ...extras.constants import IGNORE_INDEX
 from .processor_utils import DatasetProcessor, greedy_knapsack, infer_seqlen
@@ -111,6 +113,7 @@ class SupervisedDatasetProcessor(DatasetProcessor):
             model_inputs["images"].append(examples["_images"][i])
             model_inputs["videos"].append(examples["_videos"][i])
             model_inputs["audios"].append(examples["_audios"][i])
+            model_inputs["task_type"].append(examples["_task_type"][i])
 
         return model_inputs
 
@@ -120,6 +123,56 @@ class SupervisedDatasetProcessor(DatasetProcessor):
         print("inputs:\n{}".format(self.tokenizer.decode(example["input_ids"], skip_special_tokens=False)))
         print("label_ids:\n{}".format(example["labels"]))
         print(f"labels:\n{self.tokenizer.decode(valid_labels, skip_special_tokens=False)}")
+
+@dataclass
+class SupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
+    def preprocess_dataset(self, examples: dict[str, list[Any]]) -> dict[str, list[Any]]:
+        # build inputs with format `<bos> X Y <eos>` and labels with format `<ignore> ... <ignore> Y <eos>`
+        # for multiturn examples, we only mask the prompt part in each prompt-response pair.
+        model_inputs = defaultdict(list)
+        for i in range(len(examples["_prompt"])):
+            if len(examples["_prompt"][i]) % 2 != 1 or len(examples["_response"][i]) != 1:
+                logger.warning_rank0(
+                    "Dropped invalid example: {}".format(examples["_prompt"][i] + examples["_response"][i])
+                )
+                continue
+            # strange aligned
+            copied_prompt = examples["_prompt"][i].copy()
+            for cnt_item in copied_prompt[0]['content']:
+                if isinstance(cnt_item, dict):
+                    if cnt_item.get('type', '') == 'text':
+                        del cnt_item['memory_text']
+                    elif cnt_item.get('type', '') == 'memory_text':
+                        del cnt_item['text']
+
+            input_ids = self.tokenizer.apply_chat_template(
+                copied_prompt + examples["_response"][i],
+            )
+            source_len = len(self.tokenizer.apply_chat_template(
+                copied_prompt,
+                add_generation_prompt=True,
+            ))
+            labels = [IGNORE_INDEX] * source_len + input_ids[source_len:]
+            model_inputs["input_ids"].append(input_ids)
+            model_inputs["attention_mask"].append([1] * len(input_ids))
+            model_inputs["labels"].append(labels)
+
+            # Encode memory texts for this sample
+            memory_texts = examples.get("_memory", [None])[i] or []
+            if len(memory_texts) > 0:
+                # Encode memory using processor
+                memory_encoding = self.processor(text=None, memory=memory_texts, return_tensors="pt")
+                memory_input_ids = memory_encoding["memory_input_ids"]  # [num_memories, mem_len]
+                memory_attention_mask = memory_encoding["memory_attention_mask"]
+            else:
+                # Empty tensors if no memory
+                memory_input_ids = torch.empty((0, 0), dtype=torch.long)
+                memory_attention_mask = torch.empty((0, 0), dtype=torch.long)
+
+            model_inputs["memory_input_ids"].append(memory_input_ids)
+            model_inputs["memory_attention_mask"].append(memory_attention_mask)
+            model_inputs["task_type"].append(examples["_task_type"][i])
+        return model_inputs
 
 
 @dataclass

@@ -137,6 +137,10 @@ class DataArguments:
         default=False,
         metadata={"help": "Whether or not to use a shared file system for the datasets."},
     )
+    has_memory: bool = field(
+        default=False,
+        metadata={"help": "Whether or not the dataset contains memory fields."},
+    )
 
     def __post_init__(self):
         def split_arg(arg):

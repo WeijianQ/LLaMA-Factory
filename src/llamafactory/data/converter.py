@@ -237,8 +237,9 @@ class OpenAIDatasetConverter(DatasetConverter):
             self.dataset_attr.function_tag: Role.FUNCTION.value,
             self.dataset_attr.system_tag: Role.SYSTEM.value,
         }
-
         messages = example[self.dataset_attr.messages]
+        if isinstance(messages, str):
+            messages = json.loads(messages)
         if (
             self.dataset_attr.system_tag
             and len(messages) != 0
@@ -363,6 +364,112 @@ class OpenAIDatasetConverter(DatasetConverter):
             "_images": self._find_medias(example[self.dataset_attr.images]) if self.dataset_attr.images else None,
             "_videos": self._find_medias(example[self.dataset_attr.videos]) if self.dataset_attr.videos else None,
             "_audios": self._find_medias(example[self.dataset_attr.audios]) if self.dataset_attr.audios else None,
+            '_task_type': example.get('task_type', 'general'),
+        }
+        return output
+
+
+@dataclass
+class OpenAIMemoryDatasetConverter(DatasetConverter):
+    def _extract_memory_texts(self, messages: list[dict[str, Any]]) -> list[str]:
+        r"""Extract memory texts from OpenAI format messages.
+
+        Looks for memory_text items in user messages with the format:
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "..."},
+                {"type": "memory_text", "memory_text": {"text": "..."}}
+            ]
+        }
+        """
+        memory_texts = []
+        for msg in messages:
+            if msg.get(self.dataset_attr.role_tag) == self.dataset_attr.user_tag:
+                content = msg.get(self.dataset_attr.content_tag)
+                if isinstance(content, list):
+                    for content_item in content:
+                        if isinstance(content_item, dict):
+                            if content_item.get("type") == "memory_text":
+                                memory_data = content_item.get("memory_text", {})
+                                if isinstance(memory_data, dict) and "text" in memory_data:
+                                    memory_texts.append(memory_data["text"])
+        return memory_texts
+
+
+    def __call__(self, example: dict[str, Any]) -> dict[str, Any]:
+        tag_mapping = {
+            self.dataset_attr.user_tag: Role.USER.value,
+            self.dataset_attr.assistant_tag: Role.ASSISTANT.value,
+            self.dataset_attr.system_tag: Role.SYSTEM.value,
+        }
+
+        messages = json.loads(example[self.dataset_attr.messages])
+
+        # Extract memory texts before processing messages
+        memory_texts = self._extract_memory_texts(messages)
+
+        # Handle system message
+        if (
+            self.dataset_attr.system_tag
+            and len(messages) != 0
+            and messages[0][self.dataset_attr.role_tag] == self.dataset_attr.system_tag
+        ):
+            system = messages[0][self.dataset_attr.content_tag]
+            messages = messages[1:]
+        else:
+            system = example.get(self.dataset_attr.system, "") if self.dataset_attr.system else ""
+
+        aligned_messages = []
+        broken_data = False
+
+        for turn_idx, message in enumerate(messages):
+            role = message[self.dataset_attr.role_tag]
+            content = message[self.dataset_attr.content_tag]
+
+            # Only support user and assistant roles
+            if role not in tag_mapping:
+                logger.warning_rank0(f"Unsupported role: {role}. Only system/user/assistant are supported.")
+                broken_data = True
+                break
+
+            aligned_messages.append(
+                {
+                    "role": tag_mapping[role],
+                    "content": content,
+                }
+            )
+
+        # Validate message structure: must be alternating user/assistant
+        for turn_idx, message in enumerate(aligned_messages):
+            expected_role = Role.USER.value if turn_idx % 2 == 0 else Role.ASSISTANT.value
+            if message["role"] != expected_role:
+                logger.warning_rank0(f"Invalid role sequence in messages. Expected {expected_role}, got {message['role']}.")
+                broken_data = True
+                break
+
+        if len(aligned_messages) % 2 != 0:
+            logger.warning_rank0(f"Invalid message count: {len(aligned_messages)}. Must be even (user-assistant pairs).")
+            broken_data = True
+
+        if broken_data:
+            logger.warning_rank0("Skipping this abnormal example.")
+            prompt, response = [], []
+        else:
+            # Normal example: split into prompt and response
+            prompt = aligned_messages[:-1]
+            response = aligned_messages[-1:]
+
+        output = {
+            "_prompt": prompt,
+            "_response": response,
+            "_system": system,
+            "_tools": "",  # No tools for memory model
+            "_images": None,  # No images
+            "_videos": None,  # No videos
+            "_audios": None,  # No audios
+            "_memory": memory_texts,  # Add memory texts
+            "_task_type": example.get("task_type", "general"),
         }
         return output
 
@@ -371,6 +478,7 @@ DATASET_CONVERTERS = {
     "alpaca": AlpacaDatasetConverter,
     "sharegpt": SharegptDatasetConverter,
     "openai": OpenAIDatasetConverter,
+    "openai_memory": OpenAIMemoryDatasetConverter,
 }
 
 
@@ -406,6 +514,7 @@ def align_dataset(
     _images: []
     _videos: []
     _audios: []
+    _memory: []  # Memory texts (for openai_memory format)
     """
     column_names = list(next(iter(dataset)).keys())
     kwargs = {}
