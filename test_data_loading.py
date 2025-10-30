@@ -10,7 +10,7 @@ from llamafactory.data import get_dataset, get_template_and_fix_tokenizer
 from llamafactory.model import load_tokenizer
 from llamafactory.hparams import get_train_args
 from torch.utils.data import DataLoader
-
+import pickle
 
 def test_single_dataset(dataset_name, tokenizer_module, template, model_args, data_args, training_args):
     """Test loading a single dataset and creating batches."""
@@ -74,7 +74,7 @@ def test_single_dataset(dataset_name, tokenizer_module, template, model_args, da
         print("Using MemoryDataCollator for memory-augmented data")
         data_collator = MemoryDataCollator(
             padding='longest',  # Use 'longest' to pad to batch max, not model max (131072)
-            memory_truncate_length=data_args.cutoff_len,
+            memory_truncate_length=data_args.memory_truncate_length,
             pad_to_multiple_of=8,  # Changed from 64 to match workflow.py
             label_pad_token_id=IGNORE_INDEX,
             **tokenizer_module,
@@ -114,6 +114,11 @@ def test_single_dataset(dataset_name, tokenizer_module, template, model_args, da
     
     # Print batch information
     print_batch_info(batch, tokenizer_module["tokenizer"], dataset_name)
+
+    # save batch to a pickle
+    with open(f"batch_sample_{dataset_name}.pkl", "wb") as f:
+        pickle.dump(batch, f)
+    print(f"Batch saved to batch_sample_{dataset_name}.pkl")
 
     return batch
 
