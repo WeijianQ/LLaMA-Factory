@@ -142,6 +142,11 @@ class DataArguments:
         metadata={"help": "Whether or not the dataset contains memory fields."},
     )
 
+    memory_truncate_length: int = field(
+        default=1024,
+        metadata={"help": "The maximum length of the memory to be used for the memory-augmented model."},
+    )
+
     def __post_init__(self):
         def split_arg(arg):
             if isinstance(arg, str):
