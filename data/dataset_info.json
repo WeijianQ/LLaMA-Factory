@@ -732,7 +732,7 @@
     "folder": "python"
   },
   "webshop_train_keep_action_with_cm_proxy_tasks_only": {
-    "file_name": "webshop_sft_data/webshop_KEEP_ACTION_proxy_tasks_only_12000.parquet",
+    "file_name": "webshop_sft_data/webshop_train_keep_action_with_cm_proxy_tasks_only_11039.parquet",
     "formatting": "openai_memory",
     "columns": {
       "messages": "messages"
@@ -745,7 +745,33 @@
     }
   },
   "webshop_val_keep_action_with_cm_proxy_tasks_only": {
-    "file_name": "webshop_sft_data/webshop_KEEP_ACTION_proxy_tasks_only_1600.parquet",
+    "file_name": "webshop_sft_data/webshop_val_keep_action_with_cm_proxy_tasks_only_1465.parquet",
+    "formatting": "openai_memory",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
+  },
+  "webshop_train_keep_action_with_cm_policy_only": {
+    "file_name": "webshop_sft_data/webshop_train_keep_action_with_cm_policy_only_12458.parquet",
+    "formatting": "openai_memory",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
+  },
+  "webshop_val_keep_action_with_cm_policy_only": {
+    "file_name": "webshop_sft_data/webshop_val_keep_action_with_cm_policy_only_1613.parquet",
     "formatting": "openai_memory",
     "columns": {
       "messages": "messages"

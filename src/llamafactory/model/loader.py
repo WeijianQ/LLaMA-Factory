@@ -37,7 +37,8 @@ from .model_utils.mod import convert_pretrained_model_to_mod, load_mod_pretraine
 from .model_utils.unsloth import load_unsloth_pretrained_model
 from .model_utils.valuehead import load_valuehead_params
 from .patcher import patch_config, patch_model, patch_processor, patch_tokenizer, patch_valuehead_model
-from ..hf_memory_qwen25.modeling_qwen2_5_memory import Qwen2_5_MemoryForCausalLMForFreezeTraining
+from ..hf_memory_qwen25.modeling_qwen2_5_memory import Qwen2_5_MemoryForCausalLMForFreezeTraining, Qwen2_5_MemoryForCausalLM
+from ..hf_memory_qwen25.configuration_qwen2_5_memory import Qwen2_5_MemoryConfig
 
 
 if TYPE_CHECKING:
@@ -130,7 +131,17 @@ def load_tokenizer(model_args: "ModelArguments") -> "TokenizerModule":
 def load_config(model_args: "ModelArguments") -> "PretrainedConfig":
     r"""Load model config."""
     init_kwargs = _get_init_kwargs(model_args)
-    return AutoConfig.from_pretrained(model_args.model_name_or_path, **init_kwargs)
+
+    # First load with AutoConfig to check the model type
+    temp_config = AutoConfig.from_pretrained(model_args.model_name_or_path, **init_kwargs)
+
+    # If it's a Memory model, reload with the correct config class to ensure _no_split_modules is set
+    if hasattr(temp_config, 'architectures') and temp_config.architectures and \
+       temp_config.architectures[0] == "Qwen2_5_MemoryForCausalLM":
+        logger.info("Detected Qwen2_5_Memory model, loading with Qwen2_5_MemoryConfig to set FSDP policy.")
+        return Qwen2_5_MemoryConfig.from_pretrained(model_args.model_name_or_path, **init_kwargs)
+
+    return temp_config
 
 
 def load_model(
@@ -169,30 +180,12 @@ def load_model(
                 load_class = AutoModelForSeq2SeqLM
             elif type(config) in AutoModelForTextToWaveform._model_mapping.keys():  # audio hack for qwen omni
                 load_class = AutoModelForTextToWaveform
-            elif finetuning_args.finetuning_type == "freeze_llm_for_memory":
-                load_class = Qwen2_5_MemoryForCausalLMForFreezeTraining
-                num_layers = config.num_hidden_layers
-                # device_map = {
-                #     "model.embed_tokens": 0,
-                #     "lm_head": 0,
-                #     "embed_head": 0,
-                #     "special_embed_tokens": 0,
-                #     "special_lm_head": 0,
-                #     "model.norm": 3,  # Final norm on last GPU
-                #     "model.rotary_emb": 0,
-                # }
-                # # Distribute model.layers across GPUs 1, 2, 3
-                # layers_per_gpu = num_layers // 3
-                # for i in range(num_layers):
-                #     if i < layers_per_gpu:
-                #         gpu = 1
-                #     elif i < 2 * layers_per_gpu:
-                #         gpu = 2
-                #     else:
-                #         gpu = 3
-                #     device_map[f"model.layers.{i}"] = gpu
-                # init_kwargs['device_map'] = device_map
-                init_kwargs['device_map'] = 'auto'
+            elif config.architectures[0] == "Qwen2_5_MemoryForCausalLM":
+                if finetuning_args.finetuning_type == "freeze_llm_for_memory":
+                    load_class = Qwen2_5_MemoryForCausalLMForFreezeTraining
+                    init_kwargs['device_map'] = 'auto'
+                else:
+                    load_class = Qwen2_5_MemoryForCausalLM
             else:
                 load_class = AutoModelForCausalLM
 

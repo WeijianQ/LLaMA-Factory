@@ -525,6 +525,10 @@ class FinetuningArguments(
         default=None,
         metadata={"help": "Notes for the WandB experiment run."},
     )
+    freeze_memory_grad: bool = field(
+        default=False,
+        metadata={"help": "Whether or not to freeze the gradient of the memory in SFT training."},
+    )
 
     def __post_init__(self):
         def split_arg(arg):

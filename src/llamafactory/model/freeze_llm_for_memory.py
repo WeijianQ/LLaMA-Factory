@@ -68,4 +68,22 @@ def _setup_freeze_tuning_llm_for_memory(
                 assert param_id == id(model.lm_head.weight), f"Embed tokens weight is not the same as the parameter {name}"
                 tied_groups.append(f"model.embed_tokens <-> lm_head")
         logger.info_rank0(f"Detected {len(tied_groups)} tied weight group(s): {', '.join(tied_groups)}")
+
+    # Store trainable parameter info as model attributes for FSDP compatibility
+    # This helps Trainer correctly count trainable params after FSDP wrapping
+    model._trainable_param_names = trainable_params
+    model._num_trainable_params = total_trainable_params
+
+    # Set the frozen LLM (model.model) to eval mode to save memory
+    # This disables dropout and uses less memory for batch norm, etc.
+    # Similar to how LoRA handles frozen base models
+    model.lm_head.eval()
+    if hasattr(model, 'model'):
+        logger.info_rank0("Setting frozen LLM (model.model) to eval mode to save memory")
+        model.model.eval()
+
+
+        # Ensure model.model is truly frozen (no gradient computation)
+        for param in model.model.parameters():
+            param.requires_grad_(False)
         

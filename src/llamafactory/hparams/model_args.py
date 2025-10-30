@@ -504,6 +504,14 @@ class ModelArguments(
         init=False,
         metadata={"help": "Whether use block diag attention or not, derived from `neat_packing`. Do not specify it."},
     )
+    handcraft_device_map: Optional[dict[str, Any]] = field(
+        default=None,
+        metadata={"help": "Handcraft device map for model placement. Do not specify it."},
+    )
+    skip_embed_head: bool = field(
+        default=False,
+        metadata={"help": "Whether to skip the embed head linear layer. Do not specify it."},
+    )
 
     def __post_init__(self):
         BaseModelArguments.__post_init__(self)
