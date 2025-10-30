@@ -350,7 +350,8 @@ class ReporterCallback(TrainerCallback):
         self.data_args = data_args
         self.finetuning_args = finetuning_args
         self.generating_args = generating_args
-        os.environ["WANDB_PROJECT"] = self.finetuning_args.wandb_project
+        # Only set WANDB_PROJECT if wandb is actually being used
+        # This prevents wandb from auto-initializing when report_to is null
 
     @override
     def on_train_begin(self, args: "TrainingArguments", state: "TrainerState", control: "TrainerControl", **kwargs):
@@ -359,6 +360,9 @@ class ReporterCallback(TrainerCallback):
 
         if "wandb" in args.report_to:
             import wandb
+            
+            # Set WANDB_PROJECT environment variable only when using wandb
+            os.environ["WANDB_PROJECT"] = self.finetuning_args.wandb_project
 
             wandb.config.update(
                 {
