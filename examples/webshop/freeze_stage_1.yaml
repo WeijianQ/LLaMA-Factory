@@ -1,0 +1,47 @@
+### model
+model_name_or_path: WeijianQi1999/Qwen25-1p5B-Memory
+trust_remote_code: true
+skip_embed_head: false
+
+### method
+stage: sft
+do_train: true
+finetuning_type: freeze_llm_for_memory
+
+### dataset
+dataset: webshop_train_keep_action_with_cm_proxy_tasks_only
+eval_dataset: webshop_val_keep_action_with_cm_proxy_tasks_only
+template: qwen
+cutoff_len: 2048
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+has_memory: true
+
+### output
+output_dir: saves/qwen25-1p5b-memory/freeze_llm_for_memory/stage_1_sft
+logging_steps: 5
+save_steps: 20
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+### train
+per_device_train_batch_size: 4
+gradient_accumulation_steps: 32
+learning_rate: 1e-3
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.05
+bf16: true
+# Disable DDP/FSDP for device_map model parallelism
+fsdp: []
+ddp_find_unused_parameters: false
+
+### eval
+val_size: 0.0
+per_device_eval_batch_size: 4
+eval_strategy: steps
+eval_steps: 40
+
+### wandb
+wandb_project: webshop_sft_using_llamafactory
