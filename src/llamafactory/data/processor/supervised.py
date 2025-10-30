@@ -29,6 +29,8 @@ if TYPE_CHECKING:
 
 logger = logging.get_logger(__name__)
 
+from copy import deepcopy
+
 
 @dataclass
 class SupervisedDatasetProcessor(DatasetProcessor):
@@ -137,7 +139,7 @@ class SupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
                 )
                 continue
             # strange aligned
-            copied_prompt = examples["_prompt"][i].copy()
+            copied_prompt = deepcopy(examples["_prompt"][i])
             for cnt_item in copied_prompt[0]['content']:
                 if isinstance(cnt_item, dict):
                     if cnt_item.get('type', '') == 'text':
@@ -159,15 +161,13 @@ class SupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
 
             # Encode memory texts for this sample
             memory_texts = examples.get("_memory", [None])[i] or []
-            if len(memory_texts) > 0:
-                # Encode memory using processor
-                memory_encoding = self.processor(text=None, memory=memory_texts, return_tensors="pt")
-                memory_input_ids = memory_encoding["memory_input_ids"]  # [num_memories, mem_len]
-                memory_attention_mask = memory_encoding["memory_attention_mask"]
-            else:
-                # Empty tensors if no memory
-                memory_input_ids = torch.empty((0, 0), dtype=torch.long)
-                memory_attention_mask = torch.empty((0, 0), dtype=torch.long)
+            memory_input_ids = []
+            memory_attention_mask = []
+            for mem_text in memory_texts:
+                if not mem_text.endswith('<|embed|>'):
+                    mem_text = f"{mem_text}<|embed|>"
+                memory_input_ids.append(self.tokenizer.encode(mem_text, add_special_tokens=False))
+                memory_attention_mask.append([1] * len(memory_input_ids[-1]))
 
             model_inputs["memory_input_ids"].append(memory_input_ids)
             model_inputs["memory_attention_mask"].append(memory_attention_mask)
