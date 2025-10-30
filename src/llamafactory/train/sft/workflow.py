@@ -69,12 +69,11 @@ def run_sft(
     if use_memory_collator:
         logger.info_rank0("Using MemoryDataCollator for memory-augmented training")
         # Memory collator - simple, no multimodal features
-        memory_truncate_length = getattr(model_args, "memory_truncate_length", None)
         data_collator = MemoryDataCollator(
             tokenizer=tokenizer,
             pad_to_multiple_of=8 if training_args.do_train else None,
             label_pad_token_id=IGNORE_INDEX if data_args.ignore_pad_token_for_loss else tokenizer.pad_token_id,
-            memory_truncate_length=memory_truncate_length,
+            memory_truncate_length=data_args.memory_truncate_length,
             block_diag_attn=model_args.block_diag_attn,
             attn_implementation=getattr(model.config, "_attn_implementation", None),
             compute_dtype=model_args.compute_dtype,
@@ -117,7 +116,6 @@ def run_sft(
         **tokenizer_module,
         **metric_module,
     )
-    # wait_for_debugger()
 
     # Training
     if training_args.do_train:
