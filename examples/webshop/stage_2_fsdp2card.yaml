@@ -1,0 +1,59 @@
+### model
+model_name_or_path: saves/freeze_llm_for_memory/stage_1_sft/checkpoint-460_converted
+trust_remote_code: true
+skip_embed_head: false
+use_reentrant_gc: false  # Use non-reentrant gradient checkpointing
+
+### method
+stage: sft
+do_train: true
+finetuning_type: full
+
+### dataset
+dataset: webshop_train_keep_action_with_cm_policy_only
+eval_dataset: webshop_val_keep_action_with_cm_policy_only
+template: qwen
+cutoff_len: 2048
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+has_memory: true
+
+### output
+output_dir: saves/qwen25-1p5b-memory/stage_2_fsdp2card_sft
+logging_steps: 5
+save_steps: 40
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+
+### train
+per_device_train_batch_size: 4
+gradient_accumulation_steps: 16
+learning_rate: 1e-5
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.05
+bf16: true
+
+# IMPORTANT: Do NOT use gradient_checkpointing with FSDP
+# Use activation_checkpointing in fsdp_config.yaml instead
+gradient_checkpointing: false
+
+# # FSDP configuration (PyTorch native distributed training)
+# fsdp: full_shard auto_wrap
+# fsdp_config: examples/accelerate/fsdp_config.yaml
+
+# Flash Attention
+flash_attn: fa2
+
+### eval
+val_size: 0.0
+per_device_eval_batch_size: 4
+eval_strategy: steps
+eval_steps: 40
+
+### wandb
+report_to: wandb
+wandb_project: webshop_sft_using_llamafactory
+run_name: stage_2_fsdp_2card_full_ft
