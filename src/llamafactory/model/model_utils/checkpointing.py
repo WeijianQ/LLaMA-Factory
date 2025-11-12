@@ -117,7 +117,6 @@ def _gradient_checkpointing_enable(
 
     if gradient_checkpointing_kwargs is None:
         gradient_checkpointing_kwargs = {"use_reentrant": True}
-
     if use_unsloth_gc:
         gradient_checkpointing_func = get_unsloth_gradient_checkpointing_func()
     else:
@@ -162,6 +161,7 @@ def prepare_model_for_training(model: "PreTrainedModel", model_args: "ModelArgum
                 _gradient_checkpointing_enable, use_unsloth_gc=model_args.use_unsloth_gc
             )
             model.gradient_checkpointing_enable = MethodType(gradient_checkpointing_enable, model)
+            print(f"model_args.use_reentrant_gc: {model_args.use_reentrant_gc}")
             model.gradient_checkpointing_enable(
                 gradient_checkpointing_kwargs={"use_reentrant": model_args.use_reentrant_gc}
             )

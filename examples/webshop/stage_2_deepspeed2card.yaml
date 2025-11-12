@@ -1,9 +1,8 @@
 ### model
-model_name_or_path: saves/freeze_llm_for_memory/stage_1_sft/checkpoint-460_converted
-resume_from_checkpoint: saves/qwen25-1p5b-memory/stage_2_fsdp2card_sft/checkpoint-120
+model_name_or_path: saves/freeze_llm_for_memory/stage_1_sft/checkpoint-300_converted
 trust_remote_code: true
 skip_embed_head: false
-use_reentrant_gc: false  # Use non-reentrant gradient checkpointing
+use_reentrant_gc: false  # Fix DeepSpeed ZeRO-2 duplicate gradient reduction issue
 
 ### method
 stage: sft
@@ -21,7 +20,7 @@ dataloader_num_workers: 4
 has_memory: true
 
 ### output
-output_dir: saves/qwen25-1p5b-memory/stage_2_fsdp2card_sft
+output_dir: saves/qwen25-1p5b-memory/stage_2_deepspeed2card_sft
 logging_steps: 5
 save_steps: 40
 plot_loss: true
@@ -29,32 +28,30 @@ overwrite_output_dir: true
 save_only_model: false
 
 ### train
-per_device_train_batch_size: 4
+per_device_train_batch_size: 2
 gradient_accumulation_steps: 16
 learning_rate: 1e-5
 num_train_epochs: 3.0
 lr_scheduler_type: cosine
 warmup_ratio: 0.05
 bf16: true
+pure_bf16: true
+# Gradient checkpointing: Trade compute for memory (CRITICAL for memory savings)
+gradient_checkpointing: true
 
-# IMPORTANT: Do NOT use gradient_checkpointing with FSDP
-# Use activation_checkpointing in fsdp_config.yaml instead
-gradient_checkpointing: false
-
-# # FSDP configuration (PyTorch native distributed training)
-# fsdp: full_shard auto_wrap
-# fsdp_config: examples/accelerate/fsdp_config.yaml
-
-# Flash Attention
+# DeepSpeed ZeRO-2 configuration (stable for multi-GPU)
+deepspeed: examples/deepspeed/ds_z2_config.json
 flash_attn: fa2
+
+# Memory optimization
+freeze_memory_grad: true
 
 ### eval
 val_size: 0.0
-per_device_eval_batch_size: 4
+per_device_eval_batch_size: 2
 eval_strategy: steps
 eval_steps: 40
 
 ### wandb
-report_to: wandb
 wandb_project: webshop_sft_using_llamafactory
-run_name: stage_2_fsdp_2card_full_ft
+run_name: stage_2_deepspeed_z2_2card

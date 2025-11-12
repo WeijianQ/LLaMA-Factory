@@ -25,7 +25,7 @@ def test_single_dataset(dataset_name, tokenizer_module, template, model_args, da
     print(f"\nLoading dataset: {dataset_name}...")
     
     # Load dataset
-    if dataset_name == "webshop_val_keep_action_with_cm_proxy_tasks_only":
+    if "keep_action_with_cm" in dataset_name:
         data_args.has_memory = True
     else:
         data_args.has_memory = False
@@ -234,8 +234,7 @@ def test_data_loading():
 
     # Test both datasets
     datasets_to_test = [
-        "webshop_val_keep_action_with_cm_proxy_tasks_only",
-        "webshop_val_baseline"
+        "webshop_train_keep_action_with_cm_policy_only"
     ]
     
     batches = {}

@@ -60,7 +60,7 @@ def main():
     parser.add_argument("--save_path", type=str, default=None,
                         help="Path to save the converted model. If not specified, will use model_path + '_converted'")
     parser.add_argument("--pkl_path", type=str,
-                        default="batch_sample_webshop_val_keep_action_with_cm_proxy_tasks_only.pkl",
+                        default="batch_sample_webshop_train_keep_action_with_cm_policy_only.pkl",
                         help="Path to the sample data pickle file for testing")
 
     args = parser.parse_args()

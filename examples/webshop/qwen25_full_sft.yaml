@@ -19,7 +19,7 @@ dataloader_num_workers: 4
 ### output
 output_dir: saves/qwen25-1p5b-memory/full/webshop_sft
 logging_steps: 10
-save_steps: 500
+save_steps: 20
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: false
@@ -40,7 +40,7 @@ ddp_timeout: 180000000
 val_size: 0.0
 per_device_eval_batch_size: 16
 eval_strategy: steps
-eval_steps: 50
+eval_steps: 20
 
 ### wandb
 wandb_project: webshop_sft_using_llamafactory

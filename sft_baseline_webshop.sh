@@ -15,6 +15,8 @@ WANDB_NOTES="resume_from_epoch_1 train for another 2 epochs, total 3 epochs. Tra
 
 # Launch 2-way distributed SFT training with the specified data files.
 CUDA_VISIBLE_DEVICES=0 llamafactory-cli train examples/webshop/qwen25_full_sft.yaml \
+    per_device_train_batch_size=4 \
+    per_device_eval_batch_size=4 \
     model_name_or_path=${MODEL_PATH} \
     report_to="wandb" \
     wandb_notes="${WANDB_NOTES}" \

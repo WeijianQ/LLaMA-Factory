@@ -26,8 +26,8 @@ plot_loss: true
 overwrite_output_dir: true
 save_only_model: false
 ### train
-per_device_train_batch_size: 4
-gradient_accumulation_steps: 32
+per_device_train_batch_size: 8  # Can try 12-16 per GPU with FSDP on A100-40GB
+gradient_accumulation_steps: 32  # Can reduce if you increase batch size
 learning_rate: 1e-5
 num_train_epochs: 3.0
 lr_scheduler_type: cosine
@@ -36,12 +36,14 @@ bf16: true
 pure_bf16: true
 # Gradient checkpointing: Trade compute for memory (CRITICAL for memory savings)
 gradient_checkpointing: true
-# DeepSpeed ZeRO-3 configuration
-ddp_find_unused_parameters: true
+
+# DeepSpeed ZeRO-2 configuration (stable for multi-GPU)
+deepspeed: examples/deepspeed/ds_z2_config.json
+flash_attn: fa2
 
 ### eval
 val_size: 0.0
-per_device_eval_batch_size: 4
+per_device_eval_batch_size: 16
 eval_strategy: steps
 eval_steps: 40
 
