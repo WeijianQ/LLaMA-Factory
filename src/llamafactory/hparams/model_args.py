@@ -508,9 +508,25 @@ class ModelArguments(
         default=None,
         metadata={"help": "Handcraft device map for model placement. Do not specify it."},
     )
+    is_memory_model: bool = field(
+        default=False,
+        metadata={"help": "Whether the model is a memory model. Do not specify it."},
+    )
+    is_memory_suffix_model: bool = field(
+        default=False,
+        metadata={"help": "Whether the model is a memory suffix model. Do not specify it."},
+    )
     skip_embed_head: bool = field(
         default=False,
         metadata={"help": "Whether to skip the embed head linear layer. Do not specify it."},
+    )
+    tokenizer_name_or_path: Optional[str] = field(
+        default=None,
+        metadata={"help": "The name or path of the tokenizer. Do not specify it."},
+    )
+    processor_name_or_path: Optional[str] = field(
+        default=None,
+        metadata={"help": "The name or path of the processor. Do not specify it."},
     )
 
     def __post_init__(self):

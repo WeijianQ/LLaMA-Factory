@@ -37,8 +37,6 @@ from .model_utils.mod import convert_pretrained_model_to_mod, load_mod_pretraine
 from .model_utils.unsloth import load_unsloth_pretrained_model
 from .model_utils.valuehead import load_valuehead_params
 from .patcher import patch_config, patch_model, patch_processor, patch_tokenizer, patch_valuehead_model
-from ..hf_memory_qwen25.modeling_qwen2_5_memory import Qwen2_5_MemoryForCausalLMForFreezeTraining, Qwen2_5_MemoryForCausalLM
-from ..hf_memory_qwen25.configuration_qwen2_5_memory import Qwen2_5_MemoryConfig
 
 
 if TYPE_CHECKING:
@@ -49,6 +47,84 @@ if TYPE_CHECKING:
 
 logger = logging.get_logger(__name__)
 
+
+# Cache for dynamically imported memory model classes
+_memory_classes_cache = None
+_memory_suffix_classes_cache = None
+
+
+def _import_memory_model_classes():
+    """
+    Dynamically import memory model classes from external Qwen25_1p5B_Memory module.
+
+    This function handles the import of custom memory model classes that are located
+    outside the LLaMA-Factory directory structure. It adds the parent verl-agent
+    directory to sys.path and imports the necessary classes.
+
+    Returns:
+        dict: A dictionary containing the imported classes with keys:
+            - 'Qwen2_5_MemoryForCausalLMForFreezeTraining'
+            - 'Qwen2_5_MemoryForCausalLM'
+            - 'Qwen2_5_MemoryConfig'
+            - 'Qwen2_5_MemoryProcessor'
+    """
+    global _memory_classes_cache
+
+    # Return cached classes if already imported
+    if _memory_classes_cache is not None:
+        return _memory_classes_cache
+
+    import sys
+    from pathlib import Path
+
+    # Add verl-agent directory to sys.path
+    # Path structure: .../verl-agent/LLaMA-Factory/src/llamafactory/model/loader.py
+    # We need to go up 4 levels to reach verl-agent/
+    verl_agent_path = Path(__file__).resolve().parents[4]
+    if str(verl_agent_path) not in sys.path:
+        sys.path.insert(0, str(verl_agent_path))
+
+    # Import the classes from Qwen25_1p5B_Memory
+    from Qwen25_1p5B_Memory.modeling_qwen2_5_memory import (
+        Qwen2_5_MemoryDualMode,
+        Qwen2_5_MemoryForCausalLM,
+    )
+    from Qwen25_1p5B_Memory.configuration_qwen2_5_memory import Qwen2_5_MemoryConfig
+    from Qwen25_1p5B_Memory.processing_qwen2_5_memory import Qwen2_5_MemoryProcessor
+
+    # Cache the imported classes
+    _memory_classes_cache = {
+        "Qwen2_5_MemoryDualMode": Qwen2_5_MemoryDualMode,
+        "Qwen2_5_MemoryForCausalLM": Qwen2_5_MemoryForCausalLM,
+        "Qwen2_5_MemoryConfig": Qwen2_5_MemoryConfig,
+        "Qwen2_5_MemoryProcessor": Qwen2_5_MemoryProcessor,
+    }
+
+    return _memory_classes_cache
+
+def _import_memory_suffix_model_classes():
+    global _memory_suffix_classes_cache
+    if _memory_suffix_classes_cache is not None:
+        return _memory_suffix_classes_cache
+
+    import sys
+    from pathlib import Path
+
+    verl_agent_path = Path(__file__).resolve().parents[4]
+    if str(verl_agent_path) not in sys.path:
+        sys.path.insert(0, str(verl_agent_path))
+
+    from Qwen25_1p5B_Memory_suffix.modeling_qwen2_5_memory import Qwen2_5_MemorySuffixForCausalLM
+    from Qwen25_1p5B_Memory_suffix.configuration_qwen2_5_memory import Qwen2_5_MemorySuffixConfig
+    from Qwen25_1p5B_Memory_suffix.processing_qwen2_5_memory import Qwen2_5_MemorySuffixProcessor
+
+    _memory_suffix_classes_cache = {
+        "Qwen2_5_MemorySuffixForCausalLM": Qwen2_5_MemorySuffixForCausalLM,
+        "Qwen2_5_MemorySuffixConfig": Qwen2_5_MemorySuffixConfig,
+        "Qwen2_5_MemorySuffixProcessor": Qwen2_5_MemorySuffixProcessor,
+    }
+
+    return _memory_suffix_classes_cache
 
 class TokenizerModule(TypedDict):
     tokenizer: "PreTrainedTokenizer"
@@ -76,9 +152,12 @@ def load_tokenizer(model_args: "ModelArguments") -> "TokenizerModule":
     Note: including inplace operation of model_args.
     """
     init_kwargs = _get_init_kwargs(model_args)
+    tokenizer_name_or_path = model_args.tokenizer_name_or_path
+    if tokenizer_name_or_path is None:
+        tokenizer_name_or_path = model_args.model_name_or_path
     try:
         tokenizer = AutoTokenizer.from_pretrained(
-            model_args.model_name_or_path,
+            tokenizer_name_or_path,
             use_fast=model_args.use_fast_tokenizer,
             split_special_tokens=model_args.split_special_tokens,
             padding_side="right",
@@ -86,7 +165,7 @@ def load_tokenizer(model_args: "ModelArguments") -> "TokenizerModule":
         )
     except ValueError:  # try another one
         tokenizer = AutoTokenizer.from_pretrained(
-            model_args.model_name_or_path,
+            tokenizer_name_or_path,
             use_fast=not model_args.use_fast_tokenizer,
             padding_side="right",
             **init_kwargs,
@@ -97,8 +176,14 @@ def load_tokenizer(model_args: "ModelArguments") -> "TokenizerModule":
     patch_tokenizer(tokenizer, model_args)
 
     if "memory" in model_args.model_name_or_path.lower():
-        from ..hf_memory_qwen25.processing_qwen2_5_memory import Qwen2_5_MemoryProcessor
-        processor = Qwen2_5_MemoryProcessor(tokenizer=tokenizer)
+        if 'suffix' in model_args.model_name_or_path.lower():
+            memory_classes = _import_memory_suffix_model_classes()
+            Qwen2_5_MemorySuffixProcessor = memory_classes["Qwen2_5_MemorySuffixProcessor"]
+            processor = Qwen2_5_MemorySuffixProcessor(tokenizer=tokenizer)
+        else:
+            memory_classes = _import_memory_model_classes()
+            Qwen2_5_MemoryProcessor = memory_classes["Qwen2_5_MemoryProcessor"]
+            processor = Qwen2_5_MemoryProcessor(tokenizer=tokenizer)
     else:
         try:
             processor = AutoProcessor.from_pretrained(
@@ -132,15 +217,20 @@ def load_config(model_args: "ModelArguments") -> "PretrainedConfig":
     r"""Load model config."""
     init_kwargs = _get_init_kwargs(model_args)
 
+    # If it's a Memory model, reload with the correct config class to ensure _no_split_modules is set
+    if model_args.is_memory_model:
+        logger.info("Detected Qwen2_5_Memory model, loading with Qwen2_5_MemoryConfig to set FSDP policy.")
+        memory_classes = _import_memory_model_classes()
+        init_kwargs['skip_embed_head'] = model_args.skip_embed_head
+        Qwen2_5_MemoryConfig = memory_classes["Qwen2_5_MemoryConfig"]
+        return Qwen2_5_MemoryConfig.from_pretrained(model_args.model_name_or_path, **init_kwargs)
+    elif model_args.is_memory_suffix_model:
+        logger.info("Detected Qwen2_5_MemorySuffix model, loading with Qwen2_5_MemorySuffixConfig to set FSDP policy.")
+        memory_classes = _import_memory_suffix_model_classes()
+        Qwen2_5_MemorySuffixConfig = memory_classes["Qwen2_5_MemorySuffixConfig"]
+        return Qwen2_5_MemorySuffixConfig.from_pretrained(model_args.model_name_or_path, **init_kwargs)
     # First load with AutoConfig to check the model type
     temp_config = AutoConfig.from_pretrained(model_args.model_name_or_path, **init_kwargs)
-
-    # If it's a Memory model, reload with the correct config class to ensure _no_split_modules is set
-    if hasattr(temp_config, 'architectures') and temp_config.architectures and \
-       temp_config.architectures[0] == "Qwen2_5_MemoryForCausalLM":
-        logger.info("Detected Qwen2_5_Memory model, loading with Qwen2_5_MemoryConfig to set FSDP policy.")
-        return Qwen2_5_MemoryConfig.from_pretrained(model_args.model_name_or_path, **init_kwargs)
-
     return temp_config
 
 
@@ -153,6 +243,7 @@ def load_model(
 ) -> "PreTrainedModel":
     r"""Load pretrained model."""
     init_kwargs = _get_init_kwargs(model_args)
+    is_memory_model = model_args.is_memory_model
     config = load_config(model_args)
     patch_config(config, tokenizer, model_args, init_kwargs, is_trainable)
     apply_liger_kernel(config, model_args, is_trainable, require_logits=(finetuning_args.stage not in ["pt", "sft"]))
@@ -180,23 +271,32 @@ def load_model(
                 load_class = AutoModelForSeq2SeqLM
             elif type(config) in AutoModelForTextToWaveform._model_mapping.keys():  # audio hack for qwen omni
                 load_class = AutoModelForTextToWaveform
-            elif config.architectures[0] == "Qwen2_5_MemoryForCausalLM":
+            elif is_memory_model:
+                memory_classes = _import_memory_model_classes()
                 if finetuning_args.finetuning_type == "freeze_llm_for_memory":
-                    load_class = Qwen2_5_MemoryForCausalLMForFreezeTraining
-                    init_kwargs['device_map'] = 'auto'
+                    load_class = memory_classes["Qwen2_5_MemoryDualMode"]
                 else:
-                    load_class = Qwen2_5_MemoryForCausalLM
+                    load_class = memory_classes["Qwen2_5_MemoryForCausalLM"]
+                print(f"Loading model class: {load_class}")
+            elif model_args.is_memory_suffix_model:
+                memory_classes = _import_memory_suffix_model_classes()
+                load_class = memory_classes["Qwen2_5_MemorySuffixForCausalLM"]
+                print(f"Loading model class: {load_class}")
             else:
                 load_class = AutoModelForCausalLM
 
             if model_args.train_from_scratch:
                 model = load_class.from_config(config, trust_remote_code=model_args.trust_remote_code)
+            elif is_memory_model or model_args.is_memory_suffix_model:
+                init_kwargs['config'] = config
+                model = load_class.from_pretrained(**init_kwargs)
             else:
                 model = load_class.from_pretrained(**init_kwargs)
                 if getattr(model.config, "model_type", None) in ["qwen2_5_omni", "qwen3_omni_moe"]:
                     model = getattr(model, "thinker")
 
-            if isinstance(model, Qwen2_5_MemoryForCausalLMForFreezeTraining):
+            # Check if model is Qwen2_5_MemoryForCausalLMForFreezeTraining type
+            if type(model).__name__ == "Qwen2_5_MemoryForCausalLMForFreezeTraining":
                 # reapply weight tying
                 model.special_lm_head.weight = model.special_embed_tokens.weight
 

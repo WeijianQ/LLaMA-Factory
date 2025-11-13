@@ -757,8 +757,8 @@
       "assistant_tag": "assistant"
     }
   },
-  "webshop_train_keep_action_with_cm_policy_only": {
-    "file_name": "webshop_sft_data/webshop_train_keep_action_with_cm_policy_only_12458.parquet",
+  "collected_stage1_data_webshop_qwen2.5-1.5b-trial_train": {
+    "file_name": "collected_stage1_data/webshop/qwen2.5-1.5b-instruct_trial2/train.parquet",
     "formatting": "openai_memory",
     "columns": {
       "messages": "messages"
@@ -770,8 +770,8 @@
       "assistant_tag": "assistant"
     }
   },
-  "webshop_val_keep_action_with_cm_policy_only": {
-    "file_name": "webshop_sft_data/webshop_val_keep_action_with_cm_policy_only_1613.parquet",
+  "collected_stage1_data_webshop_qwen2.5-1.5b-trial_val": {
+    "file_name": "collected_stage1_data/webshop/qwen2.5-1.5b-instruct_trial2/val.parquet",
     "formatting": "openai_memory",
     "columns": {
       "messages": "messages"

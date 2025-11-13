@@ -23,7 +23,7 @@ def _setup_freeze_tuning_llm_for_memory(
     logger.info_rank0("Freezing causal LLM, only training override_table and embed_head")
 
     # Define trainable module names
-    trainable_module_names = ["special_embed_tokens", "embed_head"]
+    trainable_module_names = ["special_embed_tokens", "embed_head", "suffix_embeddings"]
     
     # First, freeze all parameters
     for name, param in model.named_parameters():

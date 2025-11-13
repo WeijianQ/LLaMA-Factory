@@ -448,11 +448,7 @@ def get_train_args(args: Optional[Union[dict[str, Any], list[str]]] = None) -> _
     elif training_args.fp16:
         model_args.compute_dtype = torch.float16
 
-    # Use device_map="auto" for freeze_llm_for_memory to enable model parallelism
-    if finetuning_args.finetuning_type == "freeze_llm_for_memory":
-        model_args.device_map = "auto"
-    else:
-        model_args.device_map = {"": get_current_device()}
+    model_args.device_map = {"": get_current_device()}
     model_args.model_max_length = data_args.cutoff_len
     model_args.block_diag_attn = data_args.neat_packing
     data_args.packing = data_args.packing if data_args.packing is not None else finetuning_args.stage == "pt"

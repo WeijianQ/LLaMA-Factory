@@ -23,7 +23,7 @@ def load_sample_data(pkl_path):
 def main():
     # Configuration
     model_name = "saves/freeze_llm_for_memory/stage_1_sft/checkpoint-300_converted"
-    pkl_path = "batch_sample_webshop_train_keep_action_with_cm_policy_only.pkl"
+    pkl_path = "/fs/ess/PAS1576/qwjian/verl-s-for-codex/LLaMA-Factory/batch_sample_webshop_train_keep_action_with_cm_policy_only.pkl"
 
     print("=" * 80)
     print("Testing Forward and Backward Pass")

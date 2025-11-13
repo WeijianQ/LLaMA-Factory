@@ -115,7 +115,8 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
 
     @override
     def compute_loss(self, model, inputs, *args, **kwargs):
-
+        from ...debug_utils import wait_for_debugger
+        wait_for_debugger()
         if self.finetuning_args.freeze_memory_grad:
             memory_attention_mask = inputs.pop("memory_attention_mask") # (B, N_mem, max_mem_len)
             memory_input_ids = inputs.pop("memory_input_ids") # (B, N_mem, max_mem_len)
@@ -125,7 +126,9 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
 
             valid_memory_input_ids = memory_input_ids[valid_memory_mask] # (N_valid, max_mem_len)
             valid_memory_attention_mask = memory_attention_mask[valid_memory_mask] # (N_valid, max_mem_len)
-            print(f"valid_memory_input_ids: {valid_memory_input_ids.shape}; valid_memory_attention_mask: {valid_memory_attention_mask.shape}")
+            # assert last token is the embed_token_id
+            assert torch.all(valid_memory_input_ids[:, -1] == 151_668), f"Last token is not the embed_token_id: {valid_memory_input_ids[:, -1]}"
+            # print(f"valid_memory_input_ids: {valid_memory_input_ids.shape}; valid_memory_attention_mask: {valid_memory_attention_mask.shape}")
 
             # if not valid_memory_mask.any():
                 

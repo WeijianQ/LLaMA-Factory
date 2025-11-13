@@ -9,8 +9,8 @@ do_train: true
 finetuning_type: freeze_llm_for_memory
 
 ### dataset
-dataset: webshop_train_keep_action_with_cm_proxy_tasks_only
-eval_dataset: webshop_val_keep_action_with_cm_proxy_tasks_only
+dataset: collected_stage1_data_webshop_qwen2.5-1.5b-trial_train
+eval_dataset: collected_stage1_data_webshop_qwen2.5-1.5b-trial_val
 template: qwen
 cutoff_len: 2048
 overwrite_cache: true
@@ -19,7 +19,7 @@ dataloader_num_workers: 4
 has_memory: true
 
 ### output
-output_dir: saves/qwen25-1p5b-memory/freeze_llm_for_memory/stage_1_sft
+output_dir: saves/qwen25-1p5b-memory/stage_1_sft_qwen2.5-1.5b-instruct-trial
 logging_steps: 5
 save_steps: 20
 plot_loss: true
@@ -33,9 +33,6 @@ num_train_epochs: 3.0
 lr_scheduler_type: cosine
 warmup_ratio: 0.05
 bf16: true
-# Disable DDP/FSDP for device_map model parallelism
-fsdp: []
-ddp_find_unused_parameters: false
 
 ### eval
 val_size: 0.0
