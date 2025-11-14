@@ -115,8 +115,6 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
 
     @override
     def compute_loss(self, model, inputs, *args, **kwargs):
-        from ...debug_utils import wait_for_debugger
-        wait_for_debugger()
         if self.finetuning_args.freeze_memory_grad:
             memory_attention_mask = inputs.pop("memory_attention_mask") # (B, N_mem, max_mem_len)
             memory_input_ids = inputs.pop("memory_input_ids") # (B, N_mem, max_mem_len)

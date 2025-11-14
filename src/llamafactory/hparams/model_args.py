@@ -528,6 +528,10 @@ class ModelArguments(
         default=None,
         metadata={"help": "The name or path of the processor. Do not specify it."},
     )
+    pt_state_dict_path: Optional[str] = field(
+        default=None,
+        metadata={"help": "The path to the PT state dict. Do not specify it."},
+    )
 
     def __post_init__(self):
         BaseModelArguments.__post_init__(self)

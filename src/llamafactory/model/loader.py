@@ -114,9 +114,9 @@ def _import_memory_suffix_model_classes():
     if str(verl_agent_path) not in sys.path:
         sys.path.insert(0, str(verl_agent_path))
 
-    from Qwen25_1p5B_Memory_suffix.modeling_qwen2_5_memory import Qwen2_5_MemorySuffixForCausalLM
-    from Qwen25_1p5B_Memory_suffix.configuration_qwen2_5_memory import Qwen2_5_MemorySuffixConfig
-    from Qwen25_1p5B_Memory_suffix.processing_qwen2_5_memory import Qwen2_5_MemorySuffixProcessor
+    from Qwen25_1p5B_Memory_suffix.modeling_qwen2_5_memory_suffix import Qwen2_5_MemorySuffixForCausalLM
+    from Qwen25_1p5B_Memory_suffix.configuration_qwen2_5_memory_suffix import Qwen2_5_MemorySuffixConfig
+    from Qwen25_1p5B_Memory_suffix.processing_qwen2_5_memory_suffix import Qwen2_5_MemorySuffixProcessor
 
     _memory_suffix_classes_cache = {
         "Qwen2_5_MemorySuffixForCausalLM": Qwen2_5_MemorySuffixForCausalLM,
@@ -348,4 +348,14 @@ def load_model(
         for name, param in model.named_parameters():
             print(f"name: {name}, dtype: {param.dtype}, device: {param.device}, trainable: {param.requires_grad}")
 
+    if model_args.pt_state_dict_path is not None:
+        logger.info(f"Loading PT state dict from {model_args.pt_state_dict_path} into model")
+        import torch
+        state_dict = torch.load(model_args.pt_state_dict_path, map_location="cpu", weights_only=False)
+        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+        if missing_keys:
+            logger.warning(f"Missing keys when loading state dict: {missing_keys}")
+        if unexpected_keys:
+            logger.warning(f"Unexpected keys when loading state dict: {unexpected_keys}")
+        logger.info("PT state dict loaded successfully")
     return model
