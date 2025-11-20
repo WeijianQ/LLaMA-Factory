@@ -7,8 +7,15 @@ Uses 4 GPUs with device_map="auto".
 import pickle
 import torch
 from transformers import AutoTokenizer, AutoConfig
-from src.llamafactory.hf_memory_qwen25.configuration_qwen2_5_memory import Qwen2_5_MemoryConfig
-from src.llamafactory.hf_memory_qwen25.modeling_qwen2_5_memory import Qwen2_5_MemoryForCausalLM
+import sys
+import os
+# ../../hf_models
+custom_hf_models_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+print(f"Custom HF models path: {custom_hf_models_path}")
+sys.path.append(custom_hf_models_path)
+
+from hf_models.Qwen25.configuration_qwen2_5_memory import Qwen2_5_MemoryConfig
+from hf_models.Qwen25.modeling_qwen2_5_memory import Qwen2_5_MemoryForCausalLM
 
 
 def load_sample_data(pkl_path):
@@ -22,7 +29,7 @@ def load_sample_data(pkl_path):
 
 def main():
     # Configuration
-    model_name = "saves/freeze_llm_for_memory/stage_1_sft/checkpoint-300_converted"
+    model_name = "Qwen25/Qwen2.5-1.5B-Instruct"
     pkl_path = "batch_sample_webshop_train_keep_action_with_cm_policy_only.pkl"
 
     print("=" * 80)
@@ -37,8 +44,9 @@ def main():
     # tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
     # Load config
-    print(f"\nLoading config from {model_name}...")
-    config = Qwen2_5_MemoryConfig.from_pretrained(model_name, trust_remote_code=True)
+    config_path = os.path.join(custom_hf_models_path, "hf_models", "Qwen25")
+    print(f"\nLoading config from {config_path}...")
+    config = Qwen2_5_MemoryConfig.from_pretrained(config_path, trust_remote_code=True)
 
     # Create custom device_map:
    
