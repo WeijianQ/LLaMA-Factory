@@ -37,8 +37,17 @@ from .model_utils.mod import convert_pretrained_model_to_mod, load_mod_pretraine
 from .model_utils.unsloth import load_unsloth_pretrained_model
 from .model_utils.valuehead import load_valuehead_params
 from .patcher import patch_config, patch_model, patch_processor, patch_tokenizer, patch_valuehead_model
-from ..hf_memory_qwen25.modeling_qwen2_5_memory import Qwen2_5_MemoryForCausalLMForFreezeTraining, Qwen2_5_MemoryForCausalLM
-from ..hf_memory_qwen25.configuration_qwen2_5_memory import Qwen2_5_MemoryConfig
+
+def _load_memory_model(model_args: "ModelArguments") -> dict[str, Any]:
+    import sys
+    custom_hf_models_path = "/fs/ess/PAS1576/qwjian/agent-memory-lab"
+    sys.path.append(custom_hf_models_path)
+    from hf_models.Qwen25.modeling_qwen2_5_memory import Qwen2_5_MemoryForCausalLM
+    from hf_models.Qwen25.configuration_qwen2_5_memory import Qwen2_5_MemoryConfig
+    return {
+        "model_class": Qwen2_5_MemoryForCausalLM,
+        "config_class": Qwen2_5_MemoryConfig,
+    }
 
 
 if TYPE_CHECKING:
@@ -77,8 +86,13 @@ def load_tokenizer(model_args: "ModelArguments") -> "TokenizerModule":
     """
     init_kwargs = _get_init_kwargs(model_args)
     try:
+        if model_args.is_memory_model:
+            # TODO
+            tmp_model_name_or_path = "/fs/ess/PAS1576/qwjian/agent-memory-lab/hf_models/Qwen25"
+        else:
+            tmp_model_name_or_path = model_args.model_name_or_path
         tokenizer = AutoTokenizer.from_pretrained(
-            model_args.model_name_or_path,
+            tmp_model_name_or_path,
             use_fast=model_args.use_fast_tokenizer,
             split_special_tokens=model_args.split_special_tokens,
             padding_side="right",
@@ -96,25 +110,21 @@ def load_tokenizer(model_args: "ModelArguments") -> "TokenizerModule":
 
     patch_tokenizer(tokenizer, model_args)
 
-    if "memory" in model_args.model_name_or_path.lower():
-        from ..hf_memory_qwen25.processing_qwen2_5_memory import Qwen2_5_MemoryProcessor
-        processor = Qwen2_5_MemoryProcessor(tokenizer=tokenizer)
-    else:
-        try:
-            processor = AutoProcessor.from_pretrained(
-                model_args.model_name_or_path,
-                use_fast=model_args.use_fast_tokenizer,
-                **init_kwargs,
-            )
-        except ValueError:  # try another one
-            processor = AutoProcessor.from_pretrained(
-                model_args.model_name_or_path,
-                use_fast=not model_args.use_fast_tokenizer,
-                **init_kwargs,
-            )
-        except Exception as e:
-            logger.info_rank0(f"Failed to load processor: {e}.")
-            processor = None
+    try:
+        processor = AutoProcessor.from_pretrained(
+            model_args.model_name_or_path,
+            use_fast=model_args.use_fast_tokenizer,
+            **init_kwargs,
+        )
+    except ValueError:  # try another one
+        processor = AutoProcessor.from_pretrained(
+            model_args.model_name_or_path,
+            use_fast=not model_args.use_fast_tokenizer,
+            **init_kwargs,
+        )
+    except Exception as e:
+        logger.info_rank0(f"Failed to load processor: {e}.")
+        processor = None
 
     # Avoid load tokenizer, see:
     # https://github.com/huggingface/transformers/blob/v4.40.0/src/transformers/models/auto/processing_auto.py#L324
@@ -136,10 +146,10 @@ def load_config(model_args: "ModelArguments") -> "PretrainedConfig":
     temp_config = AutoConfig.from_pretrained(model_args.model_name_or_path, **init_kwargs)
 
     # If it's a Memory model, reload with the correct config class to ensure _no_split_modules is set
-    if hasattr(temp_config, 'architectures') and temp_config.architectures and \
-       temp_config.architectures[0] == "Qwen2_5_MemoryForCausalLM":
-        logger.info("Detected Qwen2_5_Memory model, loading with Qwen2_5_MemoryConfig to set FSDP policy.")
-        return Qwen2_5_MemoryConfig.from_pretrained(model_args.model_name_or_path, **init_kwargs)
+    if model_args.is_memory_model:
+        logger.info("Detected Qwen2_5_Memory model, loading with Qwen2_5_MemoryConfig")
+        config_class = _load_memory_model(model_args)["config_class"]
+        return config_class.from_pretrained(model_args.model_name_or_path, **init_kwargs)
 
     return temp_config
 
@@ -180,12 +190,8 @@ def load_model(
                 load_class = AutoModelForSeq2SeqLM
             elif type(config) in AutoModelForTextToWaveform._model_mapping.keys():  # audio hack for qwen omni
                 load_class = AutoModelForTextToWaveform
-            elif config.architectures[0] == "Qwen2_5_MemoryForCausalLM":
-                if finetuning_args.finetuning_type == "freeze_llm_for_memory":
-                    load_class = Qwen2_5_MemoryForCausalLMForFreezeTraining
-                    init_kwargs['device_map'] = 'auto'
-                else:
-                    load_class = Qwen2_5_MemoryForCausalLM
+            elif model_args.is_memory_model:
+                load_class = _load_memory_model(model_args)["model_class"]
             else:
                 load_class = AutoModelForCausalLM
 
@@ -195,11 +201,6 @@ def load_model(
                 model = load_class.from_pretrained(**init_kwargs)
                 if getattr(model.config, "model_type", None) in ["qwen2_5_omni", "qwen3_omni_moe"]:
                     model = getattr(model, "thinker")
-
-            if isinstance(model, Qwen2_5_MemoryForCausalLMForFreezeTraining):
-                # reapply weight tying
-                model.special_lm_head.weight = model.special_embed_tokens.weight
-
         if model_args.mixture_of_depths == "convert":
             model = convert_pretrained_model_to_mod(model, config, model_args)
 

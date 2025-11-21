@@ -115,7 +115,6 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
 
     @override
     def compute_loss(self, model, inputs, *args, **kwargs):
-
         if self.finetuning_args.freeze_memory_grad:
             memory_attention_mask = inputs.pop("memory_attention_mask") # (B, N_mem, max_mem_len)
             memory_input_ids = inputs.pop("memory_input_ids") # (B, N_mem, max_mem_len)
@@ -138,7 +137,7 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
                 )
                 valid_memory_embeds = valid_memory_embeds.detach()
 
-            inputs["memory_embeds"] = valid_memory_embeds
+            inputs["memory_embeddings"] = valid_memory_embeds
 
         return super().compute_loss(model, inputs, *args, **kwargs)
         # batch_task_types = inputs.pop("task_type", None)

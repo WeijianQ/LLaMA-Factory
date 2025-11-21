@@ -508,10 +508,11 @@ class ModelArguments(
         default=None,
         metadata={"help": "Handcraft device map for model placement. Do not specify it."},
     )
-    skip_embed_head: bool = field(
+    is_memory_model: bool = field(
         default=False,
-        metadata={"help": "Whether to skip the embed head linear layer. Do not specify it."},
+        metadata={"help": "Whether the model is a memory model."},
     )
+
 
     def __post_init__(self):
         BaseModelArguments.__post_init__(self)

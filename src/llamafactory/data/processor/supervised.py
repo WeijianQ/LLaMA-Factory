@@ -164,8 +164,6 @@ class SupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
             memory_input_ids = []
             memory_attention_mask = []
             for mem_text in memory_texts:
-                if not mem_text.endswith('<|embed|>'):
-                    mem_text = f"{mem_text}<|embed|>"
                 memory_input_ids.append(self.tokenizer.encode(mem_text, add_special_tokens=False))
                 memory_attention_mask.append([1] * len(memory_input_ids[-1]))
 
