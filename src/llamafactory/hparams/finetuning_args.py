@@ -529,6 +529,15 @@ class FinetuningArguments(
         default=False,
         metadata={"help": "Whether or not to freeze the gradient of the memory in SFT training."},
     )
+    memory_lr: Optional[float] = field(
+        default=None,
+        metadata={
+            "help": (
+                "Learning rate for memory modules (memory_projector, summary_token_embedding). "
+                "If set, backbone uses the default learning_rate while memory modules use this value."
+            )
+        },
+    )
 
     def __post_init__(self):
         def split_arg(arg):

@@ -128,6 +128,11 @@ class SupervisedDatasetProcessor(DatasetProcessor):
 
 @dataclass
 class SupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
+    mem_pad_token_id: int = -1
+
+    def __post_init__(self):
+        self.mem_pad_token_id = self.tokenizer.convert_tokens_to_ids("<|mem_pad|>")
+
     def preprocess_dataset(self, examples: dict[str, list[Any]]) -> dict[str, list[Any]]:
         # build inputs with format `<bos> X Y <eos>` and labels with format `<ignore> ... <ignore> Y <eos>`
         # for multiturn examples, we only mask the prompt part in each prompt-response pair.
@@ -155,23 +160,43 @@ class SupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
                 add_generation_prompt=True,
             ))
             labels = [IGNORE_INDEX] * source_len + input_ids[source_len:]
+
+            # Apply left truncation if sequence exceeds cutoff_len
+            cutoff_len = self.data_args.cutoff_len
+            if len(input_ids) > cutoff_len:
+                # Left truncation: keep the rightmost (most recent) tokens
+                truncate_len = len(input_ids) - cutoff_len
+                input_ids = input_ids[truncate_len:]
+                labels = labels[truncate_len:]
+
+            # Count valid memory placeholders in truncated sequence
+            valid_mem_num = sum(1 for token_id in input_ids if token_id == self.mem_pad_token_id)
+
             model_inputs["input_ids"].append(input_ids)
             model_inputs["attention_mask"].append([1] * len(input_ids))
             model_inputs["labels"].append(labels)
 
             # Encode memory texts for this sample
             memory_texts = examples.get("_memory", [None])[i] or []
+            # Truncate memory num before encoding: keep the rightmost (most recent) memories
+            if valid_mem_num < len(memory_texts):
+                memory_texts = memory_texts[-valid_mem_num:] if valid_mem_num > 0 else []
+
             memory_input_ids = []
             memory_attention_mask = []
+            memory_truncate_length = getattr(self.data_args, 'memory_truncate_length', 1024) or 1024
             for mem_text in memory_texts:
-                memory_input_ids.append(self.tokenizer.encode(mem_text, add_special_tokens=False))
-                memory_attention_mask.append([1] * len(memory_input_ids[-1]))
+                m_ids = self.tokenizer.encode(mem_text, add_special_tokens=False)
+                # Apply left truncation to memory: keep the rightmost (most recent) tokens
+                if len(m_ids) > memory_truncate_length:
+                    m_ids = m_ids[-memory_truncate_length:]
+                memory_input_ids.append(m_ids)
+                memory_attention_mask.append([1] * len(m_ids))
 
             model_inputs["memory_input_ids"].append(memory_input_ids)
             model_inputs["memory_attention_mask"].append(memory_attention_mask)
             model_inputs["task_type"].append(examples["_task_type"][i])
         return model_inputs
-
 
 @dataclass
 class PackedSupervisedDatasetProcessor(SupervisedDatasetProcessor):

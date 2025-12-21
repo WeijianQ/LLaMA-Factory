@@ -286,6 +286,24 @@ class MemoryDataCollator(DataCollatorForSeq2Seq):
             batch_memory_input_ids.append(memory_input_ids)
             batch_memory_attention_mask.append(memory_attention_mask)
 
+        # Collate memory tensors to uniform shape
+        # Each memory tensor is [num_memories, mem_len], need to pad to [batch_size, max_num, max_len]
+        max_memory_num = max([len(mem) for mem in batch_memory_input_ids])
+        max_memory_len = max([max([len(m) for m in mem]) if len(mem) > 0 else 0 for mem in batch_memory_input_ids])
+
+        if max_memory_num == 0 or max_memory_len == 0:
+            # Add fake memory to ensure all ranks call encode() for FSDP collective sync
+            print("Adding fake memory to ensure all ranks call encode() for FSDP collective sync")
+            fake_memory = [[self.tokenizer.pad_token_id]]
+            fake_memory_mask = [[1]]
+            batch_memory_input_ids[0] = fake_memory
+            batch_memory_attention_mask[0] = fake_memory_mask
+            max_memory_num = 1
+            max_memory_len = 1
+            features[0]['input_ids'] = [self.tokenizer.convert_tokens_to_ids("<|mem_pad|>")] + features[0]['input_ids'][1:]
+            features[0]['attention_mask'] = [1] + features[0]['attention_mask'][1:]
+            features[0]['labels'] = [-100] + features[0]['labels'][1:]
+
         # Call parent collator to process text inputs (no multimodal)
         all_task_types = [f.pop("task_type", "_") for f in features]
         batch_features = super().__call__(features)
@@ -301,21 +319,15 @@ class MemoryDataCollator(DataCollatorForSeq2Seq):
             if torch.is_tensor(value) and torch.is_floating_point(value):
                 batch_features[key] = value.to(self.compute_dtype)
 
-        # Collate memory tensors to uniform shape
-        # Each memory tensor is [num_memories, mem_len], need to pad to [batch_size, max_num, max_len]
-        max_memory_num = max([len(mem) for mem in batch_memory_input_ids])
-        max_memory_len = max([max([len(m) for m in mem]) if len(mem) > 0 else 0 for mem in batch_memory_input_ids])
+        
 
-        # Apply left truncation if memory_truncate_length is set
-        if self.memory_truncate_length is not None and max_memory_len > self.memory_truncate_length:
-            max_memory_len = self.memory_truncate_length
+        # Memory truncation is now done in processor, collator only pads
         batch_size = len(batch_memory_input_ids)
         if max_memory_num == 0 and max_memory_len == 0:
             # No memory in this batch
             batched_memory_input_ids_tensor = torch.empty((batch_size, 0, 0), dtype=torch.long)
             batched_memory_attention_mask_tensor = torch.empty((batch_size, 0, 0), dtype=torch.long)
         else:
-
             batched_memory_input_ids_tensor = torch.full(
                 (batch_size, max_memory_num, max_memory_len), self.tokenizer.pad_token_id, dtype=torch.long
             )
@@ -325,10 +337,7 @@ class MemoryDataCollator(DataCollatorForSeq2Seq):
 
             for i_batch, (mem_ids_list, mem_mask_list) in enumerate(zip(batch_memory_input_ids, batch_memory_attention_mask)):
                 for i_mem, (mem_ids, mem_mask) in enumerate(zip(mem_ids_list, mem_mask_list)):
-                    # do left truncation
-                    if len(mem_ids) > self.memory_truncate_length:
-                        mem_ids = mem_ids[-self.memory_truncate_length:]
-                        mem_mask = mem_mask[-self.memory_truncate_length:]
+                    # Left padding: place tokens at the right side
                     batched_memory_input_ids_tensor[i_batch, i_mem, -len(mem_ids):] = torch.tensor(mem_ids)
                     batched_memory_attention_mask_tensor[i_batch, i_mem, -len(mem_mask):] = torch.tensor(mem_mask)
 

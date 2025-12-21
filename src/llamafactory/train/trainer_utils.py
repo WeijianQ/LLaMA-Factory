@@ -519,11 +519,81 @@ def _create_muon_optimizer(
     return optimizer
 
 
+def _create_memory_optimizer(
+    model: "PreTrainedModel",
+    training_args: "TrainingArguments",
+    finetuning_args: "FinetuningArguments",
+) -> "torch.optim.Optimizer":
+    """Create optimizer with different learning rates for backbone and memory modules.
+
+    Memory modules (memory_projector, summary_token_embedding) use memory_lr,
+    while backbone uses the default learning_rate.
+    """
+    backbone_lr = training_args.learning_rate
+    memory_lr = finetuning_args.memory_lr
+
+    # Memory module names to apply different lr
+    memory_module_names = ["memory_projector", "memory_qformer"]
+
+    decay_param_names = _get_decay_parameter_names(model)
+
+    # Categorize parameters into 4 groups:
+    # 1. backbone with weight decay
+    # 2. backbone without weight decay
+    # 3. memory with weight decay
+    # 4. memory without weight decay
+    backbone_decay_params, backbone_nodecay_params = [], []
+    memory_decay_params, memory_nodecay_params = [], []
+    memory_param_names = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+
+        is_memory = any(mem_name in name for mem_name in memory_module_names)
+        has_decay = name in decay_param_names
+
+        if is_memory:
+            memory_param_names.append(name)
+            if has_decay:
+                memory_decay_params.append(param)
+            else:
+                memory_nodecay_params.append(param)
+        else:
+            if has_decay:
+                backbone_decay_params.append(param)
+            else:
+                backbone_nodecay_params.append(param)
+
+    optim_class, optim_kwargs = Trainer.get_optimizer_cls_and_kwargs(training_args)
+
+    param_groups = [
+        dict(params=backbone_decay_params, lr=backbone_lr, weight_decay=training_args.weight_decay),
+        dict(params=backbone_nodecay_params, lr=backbone_lr, weight_decay=0.0),
+        dict(params=memory_decay_params, lr=memory_lr, weight_decay=training_args.weight_decay),
+        dict(params=memory_nodecay_params, lr=memory_lr, weight_decay=0.0),
+    ]
+
+    # Filter out empty param groups
+    param_groups = [pg for pg in param_groups if len(pg["params"]) > 0]
+
+    optimizer = optim_class(param_groups, **optim_kwargs)
+    logger.info_rank0(
+        f"Using Memory optimizer: backbone_lr={backbone_lr}, memory_lr={memory_lr}, "
+        f"backbone_params={len(backbone_decay_params) + len(backbone_nodecay_params)}, "
+        f"memory_params={len(memory_decay_params) + len(memory_nodecay_params)}, they are "
+        f"{', '.join(memory_param_names)}"
+    )
+    return optimizer
+
+
 def create_custom_optimizer(
     model: "PreTrainedModel",
     training_args: "TrainingArguments",
     finetuning_args: "FinetuningArguments",
 ) -> Optional["torch.optim.Optimizer"]:
+    if finetuning_args.memory_lr is not None:
+        return _create_memory_optimizer(model, training_args, finetuning_args)
+
     if finetuning_args.use_galore:
         return _create_galore_optimizer(model, training_args, finetuning_args)
 
