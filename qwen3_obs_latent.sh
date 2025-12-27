@@ -13,12 +13,18 @@
 #SBATCH --output=logs/qwen3_8b_memory_latent_obs_4gpu_%j.out
 #SBATCH --error=logs/qwen3_8b_memory_latent_obs_4gpu_%j.err
 
+# sleep for 5 hrs
+echo "Sleeping for 5 hrs"
+sleep 18000
+
+echo "Done sleeping"
+
 set -euo pipefail
 
 # Enable OmegaConf to accept extra CLI overrides for dataset files.
 export ALLOW_EXTRA_ARGS=1
 
-WANDB_NOTES="freeze llm, train memory module, latent obs, fsdp"
+WANDB_NOTES="freeze llm, train memory module, latent obs, fsdp, freeze memory grad"
 WANDB_PROJECT="webshop_sft_using_llamafactory_new"
 
 # Launch 4-GPU FSDP training
@@ -36,8 +42,8 @@ accelerate launch \
     --dataset new_webshop_latent_obs_train \
     --eval_dataset new_webshop_latent_obs_val \
     --template qwen \
-    --finetuning_type full \
-    --output_dir saves/qwen3_8b-memory/latent_obs_4gpu_lr1e-5 \
+    --finetuning_type freeze_llm_for_memory \
+    --output_dir saves/qwen3_8b-memory/freeze_llm_latent_obs_memory_lr1e-3 \
     --overwrite_cache \
     --preprocessing_num_workers 16 \
     --dataloader_num_workers 4 \
@@ -47,8 +53,7 @@ accelerate launch \
     --per_device_train_batch_size 4 \
     --per_device_eval_batch_size 8 \
     --gradient_accumulation_steps 16 \
-    --learning_rate 1e-5 \
-    --memory_lr 1e-3 \
+    --learning_rate 1e-3 \
     --num_train_epochs 3.0 \
     --lr_scheduler_type cosine \
     --warmup_ratio 0.0 \
@@ -62,7 +67,7 @@ accelerate launch \
     --flash_attn fa2 \
     --trust_remote_code \
     --report_to wandb \
-    --run_name qwen3_8b_memory_latent_obs_4gpu_lr1e-5 \
+    --run_name qwen3_8b_freeze_llm_memory_latent_obs_lr1e-3 \
     --overwrite_output_dir \
     --save_only_model false
 

@@ -9,8 +9,6 @@ sys.path.insert(0, "src")
 from llamafactory.data import get_dataset, get_template_and_fix_tokenizer
 from llamafactory.model import load_tokenizer
 from llamafactory.hparams import get_train_args
-from torch.utils.data import DataLoader
-import pickle
 
 def test_single_dataset(dataset_name, tokenizer_module, template, model_args, data_args, training_args):
     """Test loading a single dataset and creating batches."""
@@ -25,10 +23,7 @@ def test_single_dataset(dataset_name, tokenizer_module, template, model_args, da
     print(f"\nLoading dataset: {dataset_name}...")
     
     # Load dataset
-    if "keep_action_with_cm" in dataset_name:
-        data_args.has_memory = True
-    else:
-        data_args.has_memory = False
+    data_args.has_memory = True
 
     dataset_module = get_dataset(
         template=template,
@@ -56,7 +51,6 @@ def test_single_dataset(dataset_name, tokenizer_module, template, model_args, da
     print(f"Attention mask shape: {len(first_example['attention_mask'])}")
 
     # Check for memory fields
-    import torch
     has_memory = "memory_input_ids" in first_example
 
     # Count non-ignored labels
@@ -65,62 +59,70 @@ def test_single_dataset(dataset_name, tokenizer_module, template, model_args, da
     print(f"\nNon-ignored label tokens: {non_ignored} / {len(first_example['labels'])} ({non_ignored/len(first_example['labels'])*100:.1f}%)")
 
     print("\n" + "-" * 80)
-    print("Creating DataLoader with batch_size=16...")
+    print("Creating DataLoader and analyzing collator output for first 200 samples...")
     print("-" * 80)
 
-    # Select appropriate collator based on memory presence
-    if has_memory:
-        from llamafactory.data import MemoryDataCollator
-        print("Using MemoryDataCollator for memory-augmented data")
-        data_collator = MemoryDataCollator(
-            padding='longest',  # Use 'longest' to pad to batch max, not model max (131072)
-            memory_truncate_length=data_args.memory_truncate_length,
-            pad_to_multiple_of=8,  # Changed from 64 to match workflow.py
-            label_pad_token_id=IGNORE_INDEX,
-            **tokenizer_module,
-        )
-    else:
-        from llamafactory.data import SFTDataCollatorWith4DAttentionMask
-        print("Using SFTDataCollatorWith4DAttentionMask")
-        data_collator = SFTDataCollatorWith4DAttentionMask(
-            template=template,
-            model=None,
-            pad_to_multiple_of=None,
-            label_pad_token_id=IGNORE_INDEX,
-            block_diag_attn=False,
-            attn_implementation="eager",
-            compute_dtype=None,
-            **tokenizer_module,
-        )
+    import torch
+    from torch.utils.data import DataLoader
+    from llamafactory.data import MemoryDataCollator
 
-    # Create DataLoader
+    # Create MemoryDataCollator
+    data_collator = MemoryDataCollator(
+        tokenizer=tokenizer_module["tokenizer"],
+        padding='longest',
+        memory_truncate_length=data_args.memory_truncate_length,
+        pad_to_multiple_of=8,
+        label_pad_token_id=IGNORE_INDEX,
+    )
+
+    # Create DataLoader with batch_size=1 to inspect each sample's collator output
     dataloader = DataLoader(
         eval_dataset,
-        batch_size=16,
+        batch_size=4,
         collate_fn=data_collator,
         shuffle=False,
         num_workers=0,
     )
 
-    print(f"\nDataLoader created successfully!")
-    print(f"Number of batches: {len(dataloader)}")
+    print(f"\nDataLoader created with batch_size=1")
+    print(f"Total batches: {len(dataloader)}")
 
-    print("\n" + "-" * 80)
-    print("Getting first batch...")
-    print("-" * 80)
+    # Print info for first 200 samples after collation
+    num_samples = min(200, len(dataloader))
+    print(f"\n{'='*100}")
+    print(f"{'Idx':<6} {'Main Seq Len':<15} {'Num Memories':<15} {'Memory Shape':<25} {'Non-Empty Mems'}")
+    print(f"{'='*100}")
 
-    # Get first batch
-    batch = next(iter(dataloader))
-    
-    # Print batch information
-    print_batch_info(batch, tokenizer_module["tokenizer"], dataset_name)
+    for i, batch in enumerate(dataloader):
+        if i >= num_samples:
+            break
 
-    # save batch to a pickle
-    with open(f"batch_sample_{dataset_name}.pkl", "wb") as f:
-        pickle.dump(batch, f)
-    print(f"Batch saved to batch_sample_{dataset_name}.pkl")
+        main_seq_len = batch['input_ids'].shape[1]
+        if main_seq_len > 512:
+            from utils import wait_for_debugger
+            wait_for_debugger()
 
-    return batch
+        tokenizer = tokenizer_module["tokenizer"]
+        if "memory_input_ids" in batch:
+            mem_shape = tuple(batch['memory_input_ids'].shape)  # [1, num_mem, mem_len]
+            mem_attn = batch['memory_attention_mask'][0]  # [num_mem, mem_len]
+            non_empty_count = (mem_attn.sum(dim=-1) > 0).sum().item()
+            memory_shape_str = f"{mem_shape}"
+            if non_empty_count == 1:
+                # decode the main sequence
+                main_seq = batch['input_ids'][0]
+                main_seq_text = tokenizer.decode(main_seq, skip_special_tokens=False)
+                print(f"Main sequence text: {main_seq_text}")
+        else:
+            non_empty_count = 0
+            memory_shape_str = "N/A"
+
+        print(f"{i:<6} {main_seq_len:<15} {mem_shape[1] if 'memory_input_ids' in batch else 0:<15} {memory_shape_str:<25} {non_empty_count}")
+
+    print(f"{'='*100}")
+    print(f"Printed collator output for {num_samples} samples.")
+
+    return None
 
 
 def print_batch_info(batch, tokenizer, dataset_name):
@@ -194,18 +196,20 @@ def print_batch_info(batch, tokenizer, dataset_name):
 def test_data_loading():
     """Test loading webshop validation data and creating batches."""
 
-    # Minimal arguments for testing
+    # Minimal arguments for testing - based on qwen3_hard_code_obs.sh
     args = {
-        "model_name_or_path": "WeijianQi1999/Qwen25-1p5B-Memory",
-        "dataset": "webshop_val_baseline",  # Default, will be overridden
+        "model_name_or_path": "/fs/ess/PAS1576/qwjian/agent-memory-lab/hf_models/Qwen3_memory_8B_instruct",
+        "dataset": "new_webshop_hard_coded_obs_train_debug",  # From qwen3_hard_code_obs.sh
         "template": "qwen",
-        "cutoff_len": 4096,
+        "cutoff_len": 512,
         "stage": "sft",
         "do_train": False,
         "output_dir": "test_output",
         "overwrite_cache": True,
         "preprocessing_num_workers": 1,
         "trust_remote_code": True,
+        "is_memory_model": True,
+        "has_memory": True,
     }
 
     # Convert to command line args format
@@ -234,14 +238,14 @@ def test_data_loading():
 
     # Test both datasets
     datasets_to_test = [
-        "webshop_train_keep_action_with_cm_policy_only"
+        "new_webshop_hard_coded_obs_train_debug"
     ]
     
-    batches = {}
-    
+    results = {}
+
     for dataset_name in datasets_to_test:
         try:
-            batch = test_single_dataset(
+            test_single_dataset(
                 dataset_name=dataset_name,
                 tokenizer_module=tokenizer_module,
                 template=template,
@@ -249,34 +253,34 @@ def test_data_loading():
                 data_args=data_args,
                 training_args=training_args
             )
-            batches[dataset_name] = batch
-            print(f"\n✓ SUCCESS! Dataset '{dataset_name}' loaded and batched correctly.")
+            results[dataset_name] = True
+            print(f"\nSUCCESS: Dataset '{dataset_name}' loaded correctly.")
         except Exception as e:
-            print(f"\n✗ FAILED! Dataset '{dataset_name}' failed with error:")
+            print(f"\nFAILED: Dataset '{dataset_name}' failed with error:")
             print(f"Error: {e}")
             import traceback
             traceback.print_exc()
-            batches[dataset_name] = None
+            results[dataset_name] = False
 
     print("\n" + "=" * 80)
     print("SUMMARY")
     print("=" * 80)
-    for dataset_name, batch in batches.items():
-        if batch is not None:
-            print(f"✓ {dataset_name}: SUCCESS")
+    for dataset_name, success in results.items():
+        if success:
+            print(f"SUCCESS: {dataset_name}")
         else:
-            print(f"✗ {dataset_name}: FAILED")
+            print(f"FAILED: {dataset_name}")
     print("=" * 80)
 
-    return batches
+    return results
 
 
 if __name__ == "__main__":
     try:
-        batches = test_data_loading()
-        print("\n✓ All tests completed!")
+        results = test_data_loading()
+        print("\nAll tests completed!")
     except Exception as e:
-        print("\n✗ Test failed with error:")
+        print("\nTest failed with error:")
         print(f"Error: {e}")
         import traceback
         traceback.print_exc()

@@ -1,16 +1,16 @@
 ### model
-model_name_or_path: Qwen/Qwen2.5-1.5B-Instruct
+model_name_or_path: /fs/ess/PAS1576/qwjian/agent-memory-lab/hf_models/Qwen3_memory_8B_instruct
 trust_remote_code: true
 is_memory_model: true
 
 ### method
 stage: sft
 do_train: true
-finetuning_type: freeze_llm_for_memory
+finetuning_type: full
 
 ### dataset
-dataset: webshop_train_keep_action_with_cm_proxy_tasks_only
-eval_dataset: webshop_val_keep_action_with_cm_proxy_tasks_only
+dataset: new_webshop_hard_coded_obs_train
+eval_dataset: new_webshop_hard_coded_obs_val
 template: qwen
 cutoff_len: 2048
 overwrite_cache: true
@@ -19,7 +19,7 @@ dataloader_num_workers: 4
 has_memory: true
 
 ### output
-output_dir: saves/qwen25-1p5b-memory/freeze_llm_for_memory/stage_1_sft
+output_dir: saves/qwen3_8b-memory
 logging_steps: 1
 save_steps: 20
 plot_loss: true
@@ -28,7 +28,8 @@ save_only_model: false
 ### train
 per_device_train_batch_size: 4
 gradient_accumulation_steps: 16
-learning_rate: 1e-3
+learning_rate: 1e-6
+memory_lr: 1e-3
 num_train_epochs: 3.0
 lr_scheduler_type: cosine
 warmup_ratio: 0.03
@@ -45,5 +46,5 @@ eval_strategy: steps
 eval_steps: 40
 
 ### wandb
-wandb_project: webshop_sft_using_llamafactory
+wandb_project: webshop_sft_using_llamafactory_new
 report_to: none

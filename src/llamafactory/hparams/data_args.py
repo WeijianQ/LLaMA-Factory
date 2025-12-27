@@ -146,6 +146,10 @@ class DataArguments:
         default=1024,
         metadata={"help": "The maximum length of the memory to be used for the memory-augmented model."},
     )
+    max_memory_num: Optional[int] = field(
+        default=None,
+        metadata={"help": "Maximum number of memory entries allowed. Examples exceeding this will be dropped."},
+    )
 
     def __post_init__(self):
         def split_arg(arg):

@@ -143,6 +143,16 @@ class SupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
                     "Dropped invalid example: {}".format(examples["_prompt"][i] + examples["_response"][i])
                 )
                 continue
+
+            # Check max_memory_num constraint
+            memory_texts_check = examples.get("_memory", [None])[i] or []
+            max_memory_num = getattr(self.data_args, 'max_memory_num', None)
+            if max_memory_num is not None and len(memory_texts_check) > max_memory_num:
+                logger.warning_rank0(
+                    f"Dropped example with {len(memory_texts_check)} memories (max: {max_memory_num})."
+                )
+                continue
+
             # strange aligned
             copied_prompt = deepcopy(examples["_prompt"][i])
             for cnt_item in copied_prompt[0]['content']:

@@ -732,7 +732,7 @@
     "folder": "python"
   },
   "new_webshop_baseline_train": {
-    "file_name": "/fs/ess/PAS1576/qwjian/agent-memory-lab/external/LLaMA-Factory/remake_dataset/webshop/new_webshop_baseline_policy_train_llama_factory.parquet",
+    "file_name": "../remake_dataset/webshop/new_webshop_baseline_policy_train_llama_factory.parquet",
     "formatting": "openai",
     "columns": {
       "messages": "messages"
@@ -745,7 +745,7 @@
     }
   },
   "new_webshop_baseline_val": {
-    "file_name": "/fs/ess/PAS1576/qwjian/agent-memory-lab/external/LLaMA-Factory/remake_dataset/webshop/new_webshop_baseline_policy_val_llama_factory.parquet",
+    "file_name": "../remake_dataset/webshop/new_webshop_baseline_policy_val_llama_factory.parquet",
     "formatting": "openai",
     "columns": {
       "messages": "messages"
@@ -758,7 +758,7 @@
     }
   },
   "new_webshop_hard_coded_obs_train": {
-    "file_name": "/fs/ess/PAS1576/qwjian/agent-memory-lab/external/LLaMA-Factory/remake_dataset/webshop/new_webshop_hard_coded_obs_train_llama_factory.parquet",
+    "file_name": "../remake_dataset/webshop/new_webshop_hard_coded_obs_train_llama_factory.parquet",
     "formatting": "openai_memory",
     "columns": {
       "messages": "messages"
@@ -771,7 +771,7 @@
     }
   },
   "new_webshop_hard_coded_obs_val": {
-    "file_name": "/fs/ess/PAS1576/qwjian/agent-memory-lab/external/LLaMA-Factory/remake_dataset/webshop/new_webshop_hard_coded_obs_val_llama_factory.parquet",
+    "file_name": "../remake_dataset/webshop/new_webshop_hard_coded_obs_val_llama_factory.parquet",
     "formatting": "openai_memory",
     "columns": {
       "messages": "messages"
@@ -784,7 +784,7 @@
     }
   },
   "new_webshop_hard_coded_obs_train_debug": {
-    "file_name": "/fs/ess/PAS1576/qwjian/agent-memory-lab/external/LLaMA-Factory/remake_dataset/webshop/new_webshop_hard_coded_obs_train_debug_llama_factory.parquet",
+    "file_name": "../remake_dataset/webshop/new_webshop_hard_coded_obs_train_debug_llama_factory.parquet",
     "formatting": "openai_memory",
     "columns": {
       "messages": "messages"
@@ -797,7 +797,7 @@
     }
   },
   "new_webshop_hard_coded_obs_val_debug": {
-    "file_name": "/fs/ess/PAS1576/qwjian/agent-memory-lab/external/LLaMA-Factory/remake_dataset/webshop/new_webshop_hard_coded_obs_val_debug_llama_factory.parquet",
+    "file_name": "../remake_dataset/webshop/new_webshop_hard_coded_obs_val_debug_llama_factory.parquet",
     "formatting": "openai_memory",
     "columns": {
       "messages": "messages"
@@ -810,7 +810,7 @@
     }
   },
   "new_webshop_repeat_obs_train": {
-    "file_name": "/fs/ess/PAS1576/qwjian/agent-memory-lab/external/LLaMA-Factory/remake_dataset/webshop/new_webshop_repeat_obs_train_llama_factory.parquet",
+    "file_name": "../remake_dataset/webshop/new_webshop_repeat_obs_train_llama_factory.parquet",
     "formatting": "openai_memory",
     "columns": {
       "messages": "messages"
@@ -836,7 +836,7 @@
     }
   },
   "new_webshop_latent_obs_train": {
-    "file_name": "/fs/ess/PAS1576/qwjian/agent-memory-lab/external/LLaMA-Factory/remake_dataset/webshop/new_webshop_latent_obs_train_llama_factory.parquet",
+    "file_name": "../remake_dataset/webshop/new_webshop_latent_obs_train_llama_factory.parquet",
     "formatting": "openai_memory",
     "columns": {
       "messages": "messages"
@@ -849,7 +849,7 @@
     }
   },
   "new_webshop_latent_obs_val": {
-    "file_name": "/fs/ess/PAS1576/qwjian/agent-memory-lab/external/LLaMA-Factory/remake_dataset/webshop/new_webshop_latent_obs_val_llama_factory.parquet",
+    "file_name": "../remake_dataset/webshop/new_webshop_latent_obs_val_llama_factory.parquet",
     "formatting": "openai_memory",
     "columns": {
       "messages": "messages"
@@ -860,6 +860,33 @@
       "user_tag": "user",
       "assistant_tag": "assistant"
     }
+  },
+  "webarena_sft_baseline_train": {
+    "file_name": "../remake_dataset/webarena/webarena_baseline_sft.parquet",
+    "formatting": "openai",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "webarena_sft_memory_repeat_obs_train": {
+    "file_name": "../remake_dataset/webarena/webarena_repeat_obs_sft.parquet",
+    "formatting": "openai_memory",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
   }
-
 }
