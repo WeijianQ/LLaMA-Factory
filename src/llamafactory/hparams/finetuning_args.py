@@ -538,6 +538,10 @@ class FinetuningArguments(
             )
         },
     )
+    enable_backbone_grad: bool = field(
+        default=False,
+        metadata={"help": "Whether to enable gradient for backbone model when encoding memory."},
+    )
 
     def __post_init__(self):
         def split_arg(arg):

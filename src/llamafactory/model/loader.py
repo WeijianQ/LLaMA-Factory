@@ -180,6 +180,13 @@ def load_model(
                 load_class = AutoModelForTextToWaveform
             # elif model_args.is_memory_model:
             #     load_class = _load_memory_model(model_args)["model_class"]
+            elif finetuning_args.enable_backbone_grad:
+                import sys
+                sys.path.insert(0, "/fs/ess/PAS1576/qwjian/agent-memory-lab/external/LLaMA-Factory")
+                from hf_models.Qwen3.modeling_qwen3_memory import Qwen3_MemoryForCausalLM
+                import inspect
+                logger.info_rank0(f"Qwen3_MemoryForCausalLM loaded from: {inspect.getfile(Qwen3_MemoryForCausalLM)}")
+                load_class = Qwen3_MemoryForCausalLM
             else:
                 load_class = AutoModelForCausalLM
 
