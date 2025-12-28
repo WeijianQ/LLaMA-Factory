@@ -146,22 +146,32 @@ class SupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
 
             # Check max_memory_num constraint
             memory_texts_check = examples.get("_memory", [None])[i] or []
-            max_memory_num = getattr(self.data_args, 'max_memory_num', None)
-            if max_memory_num is not None and len(memory_texts_check) > max_memory_num:
-                logger.warning_rank0(
-                    f"Dropped example with {len(memory_texts_check)} memories (max: {max_memory_num})."
-                )
-                continue
+            max_memory_num = getattr(self.data_args, 'max_memory_num', 10000)
+            num_memory_to_drop = len(memory_texts_check) - max_memory_num
 
             # strange aligned
-            copied_prompt = deepcopy(examples["_prompt"][i])
-            for cnt_item in copied_prompt[0]['content']:
+            prompt_content_list = []
+            current_mem_num = 0
+            for cnt_item in examples["_prompt"][i][0]['content']:
                 if isinstance(cnt_item, dict):
                     if cnt_item.get('type', '') == 'text':
-                        del cnt_item['memory_text']
+                        # del cnt_item['memory_text']
+                        prompt_content_list.append({'type': 'text', 'text': cnt_item['text']})
                     elif cnt_item.get('type', '') == 'memory_text':
-                        del cnt_item['text']
-
+                        current_mem_num += 1
+                        if current_mem_num <= num_memory_to_drop:
+                            continue
+                        else:
+                            if cnt_item['is_memory'] is None:
+                                is_memory = True
+                            else:
+                                is_memory = cnt_item['is_memory']
+                            prompt_content_list.append({'type': 'memory_text', 'memory_text': {'text': cnt_item['memory_text']['text']}, 'is_memory': is_memory})
+                else:
+                    prompt_content_list.append(cnt_item)
+            copied_prompt = [{'role': 'user', 'content': prompt_content_list}]
+            if len(examples["_system"][i]) > 0:
+                copied_prompt = [{'role': 'system', 'content': examples["_system"][i]}] + copied_prompt
             input_ids = self.tokenizer.apply_chat_template(
                 copied_prompt + examples["_response"][i],
             )
@@ -180,7 +190,7 @@ class SupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
                 labels = labels[truncate_len:]
 
             # Count valid memory placeholders in truncated sequence
-            valid_mem_num = sum(1 for token_id in input_ids if token_id == self.mem_pad_token_id)
+            valid_mem_num = sum(1 for token_id in input_ids if token_id == self.mem_pad_token_id) #TODO multi mem pad not supported
 
             model_inputs["input_ids"].append(input_ids)
             model_inputs["attention_mask"].append([1] * len(input_ids))
@@ -189,6 +199,8 @@ class SupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
             # Encode memory texts for this sample
             memory_texts = examples.get("_memory", [None])[i] or []
             # Truncate memory num before encoding: keep the rightmost (most recent) memories
+            if num_memory_to_drop > 0:
+                memory_texts = memory_texts[num_memory_to_drop:]
             if valid_mem_num < len(memory_texts):
                 memory_texts = memory_texts[-valid_mem_num:] if valid_mem_num > 0 else []
 

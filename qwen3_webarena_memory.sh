@@ -42,8 +42,8 @@ accelerate launch \
     --dataloader_num_workers 4 \
     --is_memory_model \
     --has_memory \
-    --cutoff_len 8192 \
-    --memory_truncate_length 1024 \
+    --cutoff_len 16384 \
+    --memory_truncate_length 8192 \
     --per_device_train_batch_size 1 \
     --per_device_eval_batch_size 2 \
     --gradient_accumulation_steps 64 \

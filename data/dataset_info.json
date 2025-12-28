@@ -888,5 +888,33 @@
       "assistant_tag": "assistant",
       "system_tag": "system"
     }
+  },
+  "webarena_sft_memory_repeat_obs_train_MEM_HAS_TASK_INSTRUCTION": {
+    "file_name": "../remake_dataset/webarena/webarena_repeat_obs_sft_MEM_HAS_TASK_INSTRUCTION.parquet",
+    "formatting": "openai_memory",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "webarena_sft_memory_Mix_repeat_and_latent_train": {
+    "file_name": "../remake_dataset/webarena/webarena_Mix_repeat_and_latent.parquet",
+    "formatting": "openai_memory",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
   }
 }

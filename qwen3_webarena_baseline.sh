@@ -58,4 +58,5 @@ accelerate launch \
     --report_to wandb \
     --run_name qwen3_8b_webarena_baseline_4gpu \
     --overwrite_output_dir \
+    --resume_from_checkpoint "saves/qwen3_8b-memory/webarena_repeat_obs_4gpu_lr1e-5/checkpoint-50" \
     --save_only_model false
