@@ -469,7 +469,7 @@ class OpenAIMemoryDatasetConverter(DatasetConverter):
             "_videos": None,  # No videos
             "_audios": None,  # No audios
             "_memory": memory_texts,  # Add memory texts
-            "_task_type": example.get("task_type", "general"),
+            "_task_type": example.get("type", example.get("task_type", "action")),
         }
         return output
 
@@ -588,7 +588,7 @@ class MultiTurnOpenAIMemoryDatasetConverter(DatasetConverter):
             "_videos": None,
             "_audios": None,
             "_memory": all_memory_texts,
-            "_task_type": example.get("task_type", "general"),
+            "_task_type": example.get("type", example.get("task_type", "action")),
         }
         return output
 

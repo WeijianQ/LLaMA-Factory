@@ -374,49 +374,42 @@ class MultiTurnSupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
             input_ids = self.tokenizer.apply_chat_template(messages)
 
             # Compute labels by masking user turns and keeping assistant turns
-            # We need to tokenize incrementally to find boundaries
-            # IMPORTANT: Reuse the already-processed `messages` list to ensure consistency
-            labels = []
-            current_pos = 0
-
-            # Process each message in the already-built messages list
-            # Count total assistant turns for only_predict_last_turn
             only_predict_last_turn = getattr(self.data_args, 'only_predict_last_turn', False)
+
             if only_predict_last_turn:
-                total_assistant_turns = sum(1 for msg in messages if msg['role'] == 'assistant')
-                current_assistant_turn = 0
+                # Simplified: only train on the last assistant turn
+                assert messages[-1]['role'] == 'assistant', "Last message must be assistant"
+                # Tokenize all but last message with generation prompt to get source length
+                source_len = len(self.tokenizer.apply_chat_template(
+                    messages[:-1], add_generation_prompt=True
+                ))
+                labels = [IGNORE_INDEX] * source_len + input_ids[source_len:]
+            else:
+                # Train on all assistant turns - need to iterate through messages
+                labels = []
+                current_pos = 0
+                conversation_so_far = []
 
-            conversation_so_far = []
-            for msg in messages:
-                conversation_so_far.append(msg)
+                for msg in messages:
+                    conversation_so_far.append(msg)
 
-                if msg['role'] == 'system' or msg['role'] == 'user':
-                    # Get position after this message (with generation prompt for user/system)
-                    tokens_so_far = self.tokenizer.apply_chat_template(
-                        conversation_so_far, add_generation_prompt=True
-                    )
-                    new_pos = len(tokens_so_far)
-                    # Mask system/user turn
-                    labels.extend([IGNORE_INDEX] * (new_pos - current_pos))
-                    current_pos = new_pos
+                    if msg['role'] == 'system' or msg['role'] == 'user':
+                        # Get position after this message (with generation prompt for user/system)
+                        tokens_so_far = self.tokenizer.apply_chat_template(
+                            conversation_so_far, add_generation_prompt=True
+                        )
+                        new_pos = len(tokens_so_far)
+                        # Mask system/user turn
+                        labels.extend([IGNORE_INDEX] * (new_pos - current_pos))
+                        current_pos = new_pos
 
-                else:  # assistant
-                    # Get position after this assistant message
-                    tokens_so_far = self.tokenizer.apply_chat_template(conversation_so_far)
-                    new_pos = len(tokens_so_far)
-
-                    if only_predict_last_turn:
-                        current_assistant_turn += 1
-                        if current_assistant_turn < total_assistant_turns:
-                            # Mask non-last assistant turns
-                            labels.extend([IGNORE_INDEX] * (new_pos - current_pos))
-                        else:
-                            # Train on last assistant turn only
-                            labels.extend(input_ids[current_pos:new_pos])
-                    else:
+                    else:  # assistant
+                        # Get position after this assistant message
+                        tokens_so_far = self.tokenizer.apply_chat_template(conversation_so_far)
+                        new_pos = len(tokens_so_far)
                         # Train on all assistant turns
                         labels.extend(input_ids[current_pos:new_pos])
-                    current_pos = new_pos
+                        current_pos = new_pos
 
             # Apply left truncation if sequence exceeds cutoff_len
             cutoff_len = self.data_args.cutoff_len

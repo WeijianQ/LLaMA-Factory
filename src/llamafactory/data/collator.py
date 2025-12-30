@@ -291,18 +291,20 @@ class MemoryDataCollator(DataCollatorForSeq2Seq):
         max_memory_num = max([len(mem) for mem in batch_memory_input_ids])
         max_memory_len = max([max([len(m) for m in mem]) if len(mem) > 0 else 0 for mem in batch_memory_input_ids])
 
-        if max_memory_num == 0 or max_memory_len == 0:
-            # Add fake memory to ensure all ranks call encode() for FSDP collective sync
-            print("Adding fake memory to ensure all ranks call encode() for FSDP collective sync")
-            fake_memory = [[self.tokenizer.pad_token_id]]
-            fake_memory_mask = [[1]]
-            batch_memory_input_ids[0] = fake_memory
-            batch_memory_attention_mask[0] = fake_memory_mask
-            max_memory_num = 1
-            max_memory_len = 1
-            features[0]['input_ids'] = [self.tokenizer.convert_tokens_to_ids("<|mem_pad|>")] + features[0]['input_ids'][1:]
-            features[0]['attention_mask'] = [1] + features[0]['attention_mask'][1:]
-            features[0]['labels'] = [-100] + features[0]['labels'][1:]
+        # if max_memory_num == 0 or max_memory_len == 0:
+        #     from ..debug_utils import wait_for_debugger
+        #     wait_for_debugger()
+        #     # Add fake memory to ensure all ranks call encode() for FSDP collective sync
+        #     print("Adding fake memory to ensure all ranks call encode() for FSDP collective sync")
+        #     fake_memory = [[self.tokenizer.pad_token_id]]
+        #     fake_memory_mask = [[1]]
+        #     batch_memory_input_ids[0] = fake_memory
+        #     batch_memory_attention_mask[0] = fake_memory_mask
+        #     max_memory_num = 1
+        #     max_memory_len = 1
+        #     features[0]['input_ids'] = [self.tokenizer.convert_tokens_to_ids("<|mem_pad|>")] + features[0]['input_ids'][1:]
+        #     features[0]['attention_mask'] = [1] + features[0]['attention_mask'][1:]
+        #     features[0]['labels'] = [-100] + features[0]['labels'][1:]
 
         # Call parent collator to process text inputs (no multimodal)
         all_task_types = [f.pop("task_type", "_") for f in features]
@@ -343,8 +345,14 @@ class MemoryDataCollator(DataCollatorForSeq2Seq):
 
         batch_features["memory_input_ids"] = batched_memory_input_ids_tensor
         batch_features["memory_attention_mask"] = batched_memory_attention_mask_tensor
-        # from utils import wait_for_debugger
-        # wait_for_debugger()
+
+        # Create encoding_grad tensor based on task_type
+        # reconstruction -> True (keep grad), action/others -> False (detach)
+        encoding_grad = torch.tensor(
+            [task_type == "reconstruction" for task_type in all_task_types],
+            dtype=torch.bool
+        )
+        batch_features["encoding_grad"] = encoding_grad
         batch_features["task_type"] = all_task_types
         return batch_features
 
