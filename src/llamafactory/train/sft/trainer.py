@@ -115,6 +115,23 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
 
     @override
     def compute_loss(self, model, inputs, *args, **kwargs):
+        # Debug: save inputs to pickle on rank 0
+        # import torch.distributed as dist
+        # import pickle
+        # if not dist.is_initialized() or dist.get_rank() == 0:
+        #     debug_path = "/fs/ess/PAS1576/qwjian/agent-memory-lab/external/LLaMA-Factory/debug_inputs.pkl"
+        #     with open(debug_path, "wb") as f:
+        #         # Move tensors to CPU for pickle
+        #         inputs_cpu = {}
+        #         for k, v in inputs.items():
+        #             if isinstance(v, torch.Tensor):
+        #                 inputs_cpu[k] = v.detach().cpu()
+        #             else:
+        #                 inputs_cpu[k] = v
+        #         pickle.dump(inputs_cpu, f)
+        #     logger.info_rank0(f"Saved debug inputs to {debug_path}")
+        #     raise ValueError("Debug: stop here")
+
         if self.finetuning_args.enable_backbone_grad:
             inputs['enable_backbone_grad'] = True
 
