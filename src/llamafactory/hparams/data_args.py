@@ -150,6 +150,10 @@ class DataArguments:
         default=None,
         metadata={"help": "Maximum number of memory entries allowed. Examples exceeding this will be dropped."},
     )
+    only_predict_last_turn: bool = field(
+        default=False,
+        metadata={"help": "Whether to only predict the last assistant turn in multi-turn conversations."},
+    )
 
     def __post_init__(self):
         def split_arg(arg):

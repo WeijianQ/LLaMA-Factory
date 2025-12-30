@@ -380,6 +380,12 @@ class MultiTurnSupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
             current_pos = 0
 
             # Process each message in the already-built messages list
+            # Count total assistant turns for only_predict_last_turn
+            only_predict_last_turn = getattr(self.data_args, 'only_predict_last_turn', False)
+            if only_predict_last_turn:
+                total_assistant_turns = sum(1 for msg in messages if msg['role'] == 'assistant')
+                current_assistant_turn = 0
+
             conversation_so_far = []
             for msg in messages:
                 conversation_so_far.append(msg)
@@ -398,8 +404,18 @@ class MultiTurnSupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
                     # Get position after this assistant message
                     tokens_so_far = self.tokenizer.apply_chat_template(conversation_so_far)
                     new_pos = len(tokens_so_far)
-                    # Train on assistant turn - use actual token IDs
-                    labels.extend(input_ids[current_pos:new_pos])
+
+                    if only_predict_last_turn:
+                        current_assistant_turn += 1
+                        if current_assistant_turn < total_assistant_turns:
+                            # Mask non-last assistant turns
+                            labels.extend([IGNORE_INDEX] * (new_pos - current_pos))
+                        else:
+                            # Train on last assistant turn only
+                            labels.extend(input_ids[current_pos:new_pos])
+                    else:
+                        # Train on all assistant turns
+                        labels.extend(input_ids[current_pos:new_pos])
                     current_pos = new_pos
 
             # Apply left truncation if sequence exceeds cutoff_len
