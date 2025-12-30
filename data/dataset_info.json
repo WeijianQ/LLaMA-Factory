@@ -822,6 +822,19 @@
       "assistant_tag": "assistant"
     }
   },
+  "new_webshop_repeat_obs_train_debug": {
+    "file_name": "../remake_dataset/webshop/new_webshop_repeat_obs_train_llama_factory_debug.parquet",
+    "formatting": "openai_memory",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
+  },
   "new_webshop_repeat_obs_val": {
     "file_name": "/fs/ess/PAS1576/qwjian/agent-memory-lab/external/LLaMA-Factory/remake_dataset/webshop/new_webshop_repeat_obs_val_llama_factory.parquet",
     "formatting": "openai_memory",
@@ -906,6 +919,48 @@
   "webarena_sft_memory_Mix_repeat_and_latent_train": {
     "file_name": "../remake_dataset/webarena/webarena_Mix_repeat_and_latent.parquet",
     "formatting": "openai_memory",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "webarena_stress_test_top200": {
+    "file_name": "../remake_dataset/webarena/webarena_stress_test_top200.parquet",
+    "formatting": "openai_memory_multiturn",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "webarena_memory_multi_turn_sft": {
+    "file_name": "../remake_dataset/webarena/webarena_memory_multi_turn_sft.parquet",
+    "formatting": "openai_memory_multiturn",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "webarena_memory_multi_turn_sft_text_only": {
+    "file_name": "../remake_dataset/webarena/webarena_memory_multi_turn_sft_text_only.parquet",
+    "formatting": "openai_memory_multiturn",
     "columns": {
       "messages": "messages"
     },
