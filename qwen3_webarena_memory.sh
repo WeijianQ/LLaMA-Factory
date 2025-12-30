@@ -60,7 +60,7 @@ accelerate launch \
     --bf16 \
     --flash_attn fa2 \
     --trust_remote_code \
-    --report_to wandb \
+    --report_to none \
     --run_name qwen3_8b_webarena_repeat_obs_4gpu \
     --overwrite_output_dir \
     --save_only_model false

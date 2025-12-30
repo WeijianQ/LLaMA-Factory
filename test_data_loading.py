@@ -196,12 +196,14 @@ def print_batch_info(batch, tokenizer, dataset_name):
 def test_data_loading():
     """Test loading webshop validation data and creating batches."""
 
-    # Minimal arguments for testing - based on qwen3_hard_code_obs.sh
+    # Minimal arguments for testing - matching qwen3_webarena_memory_debug.sh
     args = {
-        "model_name_or_path": "/fs/ess/PAS1576/qwjian/agent-memory-lab/hf_models/Qwen3_memory_8B_instruct",
-        "dataset": "new_webshop_hard_coded_obs_train_debug",  # From qwen3_hard_code_obs.sh
+        "model_name_or_path": "/fs/ess/PAS1576/qwjian/agent-memory-lab/external/LLaMA-Factory/hf_models/Qwen3_memory_8B_16q_tokens",
+        "dataset": "webarena_stress_test_top200",  # From qwen3_webarena_memory_debug.sh
         "template": "qwen",
-        "cutoff_len": 512,
+        "cutoff_len": 16384,  # From qwen3_webarena_memory_debug.sh
+        "memory_truncate_length": 8192,  # From qwen3_webarena_memory_debug.sh
+        "max_memory_num": 15,  # From qwen3_webarena_memory_debug.sh
         "stage": "sft",
         "do_train": False,
         "output_dir": "test_output",
@@ -236,9 +238,9 @@ def test_data_loading():
     print(f"Template: {template.__class__.__name__}")
     print(f"Vocab size: {len(tokenizer)}")
 
-    # Test both datasets
+    # Test dataset matching qwen3_webarena_memory.sh
     datasets_to_test = [
-        "new_webshop_hard_coded_obs_train_debug"
+        "webarena_stress_test_top200"
     ]
     
     results = {}
@@ -275,13 +277,370 @@ def test_data_loading():
     return results
 
 
+def simulate_rank_step(target_rank=1, target_optimizer_step=35, verbose=False):
+    """
+    Simulate what a given rank sees at a given optimizer step during 4-GPU FSDP training.
+
+    Config from qwen3_webarena_memory.sh:
+    - 4 GPUs, batch_size=1, gradient_accumulation_steps=64
+    - DistributedSampler distributes samples:
+      Rank 0: samples 0, 4, 8, ...
+      Rank 1: samples 1, 5, 9, ...
+      Rank 2: samples 2, 6, 10, ...
+      Rank 3: samples 3, 7, 11, ...
+    """
+    import os
+    # Fake single-GPU environment to bypass distributed check
+    os.environ["RANK"] = "0"
+    os.environ["LOCAL_RANK"] = "0"
+    os.environ["WORLD_SIZE"] = "1"
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "29500"
+
+    if verbose:
+        print("=" * 80)
+        print(f"Simulating Rank {target_rank}, Step {target_optimizer_step} (matching qwen3_webarena_memory.sh config)")
+        print("=" * 80)
+
+    args = {
+        "model_name_or_path": "/fs/ess/PAS1576/qwjian/agent-memory-lab/hf_models/Qwen3_memory_8B_instruct",
+        "dataset": "webarena_sft_memory_repeat_obs_train",
+        "template": "qwen",
+        "cutoff_len": 16384,
+        "memory_truncate_length": 8192,
+        "max_memory_num": 15,
+        "stage": "sft",
+        "do_train": True,  # Need this to pass validation
+        "output_dir": "test_output",
+        "overwrite_cache": False,  # Use cache for speed
+        "preprocessing_num_workers": 16,
+        "trust_remote_code": True,
+        "is_memory_model": True,
+        "has_memory": True,
+        "per_device_train_batch_size": 1,
+    }
+
+    cmd_args = []
+    for key, value in args.items():
+        cmd_args.append(f"--{key}")
+        cmd_args.append(str(value))
+
+    model_args, data_args, training_args, finetuning_args, generating_args = get_train_args(cmd_args)
+    tokenizer_module = load_tokenizer(model_args)
+    tokenizer = tokenizer_module["tokenizer"]
+    template = get_template_and_fix_tokenizer(tokenizer, data_args)
+
+    if verbose:
+        print(f"Loading dataset...")
+    data_args.has_memory = True
+    dataset_module = get_dataset(
+        template=template,
+        model_args=model_args,
+        data_args=data_args,
+        training_args=training_args,
+        stage="sft",
+        **tokenizer_module
+    )
+    dataset = dataset_module["train_dataset"]
+    if verbose:
+        print(f"Dataset size: {len(dataset)}")
+
+    # Simulate DistributedSampler for 4 GPUs
+    # Config: 4 GPUs, batch_size=1, gradient_accumulation_steps=64
+    num_gpus = 4
+    ga_steps = 64
+
+    # Each optimizer step = 64 micro-batches per rank
+    # DistributedSampler distributes:
+    # Global micro-batch i -> Rank (i % num_gpus)
+    # Rank N gets global indices: N, N+4, N+8, ... (where idx % 4 == N)
+    # Rank N's micro-batch M corresponds to global index: N + M * num_gpus
+
+    if verbose:
+        print(f"\nOptimizer step {target_optimizer_step}:")
+        print(f"  Rank {target_rank} processes micro-batches {(target_optimizer_step-1)*ga_steps} to {target_optimizer_step*ga_steps-1}")
+
+    # Check all 64 micro-batches in this optimizer step
+    start_micro = (target_optimizer_step - 1) * ga_steps
+    end_micro = target_optimizer_step * ga_steps
+
+    if verbose:
+        print(f"\nChecking all {ga_steps} micro-batches in optimizer step {target_optimizer_step}:")
+        print(f"{'Micro':>8} {'Global Idx':>12} {'Input Len':>12} {'Mem Count':>12} {'Max Mem Len':>12}")
+        print("-" * 60)
+
+    max_input_len = 0
+    max_mem_len = 0
+    total_mem_tokens = 0  # Sum of all memory tokens
+    problematic_samples = []
+
+    for micro_batch in range(start_micro, end_micro):
+        global_idx = target_rank + micro_batch * num_gpus
+
+        if global_idx >= len(dataset):
+            if verbose:
+                print(f"{micro_batch:>8} {global_idx:>12} OUT OF RANGE")
+            continue
+
+        sample = dataset[global_idx]
+        input_len = len(sample['input_ids'])
+
+        if 'memory_input_ids' in sample:
+            mem_count = len(sample['memory_input_ids'])
+            mem_lens = [len(m) for m in sample['memory_input_ids']]
+            sample_max_mem_len = max(mem_lens) if mem_lens else 0
+            sample_total_mem = sum(mem_lens)
+        else:
+            mem_count = 0
+            sample_max_mem_len = 0
+            sample_total_mem = 0
+
+        if verbose:
+            print(f"{micro_batch:>8} {global_idx:>12} {input_len:>12} {mem_count:>12} {sample_max_mem_len:>12}")
+
+        if input_len > max_input_len:
+            max_input_len = input_len
+        if sample_max_mem_len > max_mem_len:
+            max_mem_len = sample_max_mem_len
+        total_mem_tokens += sample_total_mem
+
+        # Flag potentially problematic samples
+        if input_len > 10000 or sample_max_mem_len > 6000:
+            problematic_samples.append((micro_batch, global_idx, input_len, mem_count, sample_max_mem_len))
+
+    if verbose:
+        print("-" * 60)
+        print(f"Max input_len in this step: {max_input_len}")
+        print(f"Max memory_len in this step: {max_mem_len}")
+        print(f"Total memory tokens in this step: {total_mem_tokens}")
+
+        if problematic_samples:
+            print(f"\n⚠️  Potentially problematic samples:")
+            for micro, gidx, ilen, mcnt, mlen in problematic_samples:
+                print(f"  Micro {micro}, Global {gidx}: input={ilen}, mem_count={mcnt}, max_mem_len={mlen}")
+
+        print(f"\n{'='*80}")
+        print("Analysis complete.")
+        print(f"{'='*80}")
+
+    return {
+        "step": target_optimizer_step,
+        "rank": target_rank,
+        "max_input_len": max_input_len,
+        "max_mem_len": max_mem_len,
+        "total_mem_tokens": total_mem_tokens,
+        "problematic_count": len(problematic_samples),
+        "problematic_samples": problematic_samples,
+    }
+
+
+def compare_steps():
+    """Compare memory statistics across multiple steps to find what's special about the OOM step."""
+    print("=" * 100)
+    print("Comparing Steps 33-40 for Rank 1 (OOM occurred at pbar=35, likely during step 36)")
+    print("=" * 100)
+
+    steps_to_check = [33, 34, 35, 36, 37, 38, 39, 40]
+    results = []
+
+    for step in steps_to_check:
+        result = simulate_rank_step(target_rank=1, target_optimizer_step=step, verbose=False)
+        results.append(result)
+
+    # Print comparison table
+    print(f"\n{'Step':>6} {'Max Input':>12} {'Max Mem':>12} {'Total Mem':>14} {'Problematic':>12}")
+    print("-" * 60)
+    for r in results:
+        print(f"{r['step']:>6} {r['max_input_len']:>12} {r['max_mem_len']:>12} {r['total_mem_tokens']:>14} {r['problematic_count']:>12}")
+    print("-" * 60)
+
+    # # Find the step with max input length
+    # max_input_step = max(results, key=lambda x: x['max_input_len'])
+    # max_mem_step = max(results, key=lambda x: x['max_mem_len'])
+    # max_total_mem_step = max(results, key=lambda x: x['total_mem_tokens'])
+
+    # print(f"\nStep with max input_len: Step {max_input_step['step']} ({max_input_step['max_input_len']} tokens)")
+    # print(f"Step with max memory_len: Step {max_mem_step['step']} ({max_mem_step['max_mem_len']} tokens)")
+    # print(f"Step with max total_mem: Step {max_total_mem_step['step']} ({max_total_mem_step['total_mem_tokens']} tokens)")
+
+    # # Show problematic samples for the likely OOM step (36)
+    # print("\n" + "=" * 100)
+    # print("Details for Step 36 (likely OOM step):")
+    # print("=" * 100)
+    # step36 = simulate_rank_step(target_rank=1, target_optimizer_step=36, verbose=True)
+
+    # # Also check all ranks at step 36 to see which rank has the biggest samples
+    # print("\n" + "=" * 100)
+    # print("Comparing all ranks at Step 36:")
+    # print("=" * 100)
+    # print(f"{'Rank':>6} {'Max Input':>12} {'Max Mem':>12} {'Total Mem':>14} {'Problematic':>12}")
+    # print("-" * 60)
+    # for rank in range(4):
+    #     r = simulate_rank_step(target_rank=rank, target_optimizer_step=36, verbose=False)
+    #     print(f"{rank:>6} {r['max_input_len']:>12} {r['max_mem_len']:>12} {r['total_mem_tokens']:>14} {r['problematic_count']:>12}")
+    # print("-" * 60)
+
+
+def use_real_dataloader(target_rank=1, target_step=35):
+    """
+    Use the actual DistributedSampler (like HuggingFace Trainer) to see what each rank gets.
+    """
+    import os
+    import torch
+    from torch.utils.data import DataLoader
+    from torch.utils.data.distributed import DistributedSampler
+
+    # Set environment to simulate the target rank
+    os.environ["RANK"] = str(target_rank)
+    os.environ["LOCAL_RANK"] = "0"
+    os.environ["WORLD_SIZE"] = "4"
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "29500"
+
+    print("=" * 100)
+    print(f"Using real DistributedSampler to check what Rank {target_rank} sees at step {target_step}")
+    print("=" * 100)
+
+    args = {
+        "model_name_or_path": "/fs/ess/PAS1576/qwjian/agent-memory-lab/hf_models/Qwen3_memory_8B_instruct",
+        "dataset": "webarena_sft_memory_repeat_obs_train",
+        "template": "qwen",
+        "cutoff_len": 16384,
+        "memory_truncate_length": 8192,
+        "max_memory_num": 15,
+        "stage": "sft",
+        "do_train": True,
+        "output_dir": "test_output",
+        "overwrite_cache": False,
+        "preprocessing_num_workers": 16,
+        "trust_remote_code": True,
+        "is_memory_model": True,
+        "has_memory": True,
+        "per_device_train_batch_size": 1,
+    }
+
+    cmd_args = []
+    for key, value in args.items():
+        cmd_args.append(f"--{key}")
+        cmd_args.append(str(value))
+
+    model_args, data_args, training_args, finetuning_args, generating_args = get_train_args(cmd_args)
+    tokenizer_module = load_tokenizer(model_args)
+    tokenizer = tokenizer_module["tokenizer"]
+    template = get_template_and_fix_tokenizer(tokenizer, data_args)
+
+    print(f"Loading dataset...")
+    data_args.has_memory = True
+    dataset_module = get_dataset(
+        template=template,
+        model_args=model_args,
+        data_args=data_args,
+        training_args=training_args,
+        stage="sft",
+        **tokenizer_module
+    )
+    dataset = dataset_module["train_dataset"]
+    print(f"Dataset size: {len(dataset)}")
+
+    # Create DistributedSampler like HuggingFace Trainer does
+    # shuffle=True (default), seed=42 (default in Trainer)
+    sampler = DistributedSampler(
+        dataset,
+        num_replicas=4,
+        rank=target_rank,
+        shuffle=True,
+        seed=42,
+    )
+
+    from llamafactory.extras.constants import IGNORE_INDEX
+    from llamafactory.data import MemoryDataCollator
+
+    data_collator = MemoryDataCollator(
+        tokenizer=tokenizer,
+        padding='longest',
+        memory_truncate_length=data_args.memory_truncate_length,
+        pad_to_multiple_of=8,
+        label_pad_token_id=IGNORE_INDEX,
+    )
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=1,
+        sampler=sampler,
+        collate_fn=data_collator,
+        num_workers=0,
+    )
+
+    print(f"\nDataLoader created with DistributedSampler (rank={target_rank}, world_size=4)")
+    print(f"Total batches for this rank: {len(dataloader)}")
+
+    # GA = 64, so optimizer step N covers batches [(N-1)*64, N*64)
+    ga_steps = 64
+    start_batch = (target_step - 1) * ga_steps
+    end_batch = target_step * ga_steps
+
+    print(f"\nChecking optimizer step {target_step} (batches {start_batch} to {end_batch-1}):")
+    print(f"{'Batch':>8} {'Input Len':>12} {'Mem Count':>12} {'Max Mem Len':>12}")
+    print("-" * 50)
+
+    max_input_len = 0
+    max_mem_len = 0
+    problematic = []
+
+    for batch_idx, batch in enumerate(dataloader):
+        if batch_idx < start_batch:
+            continue
+        if batch_idx >= end_batch:
+            break
+
+        input_len = batch['input_ids'].shape[1]
+
+        if 'memory_input_ids' in batch:
+            mem_count = batch['memory_input_ids'].shape[1]
+            mem_len = batch['memory_input_ids'].shape[2]
+            mem_attn = batch['memory_attention_mask'][0]
+            non_empty = (mem_attn.sum(dim=-1) > 0).sum().item()
+        else:
+            mem_count = 0
+            mem_len = 0
+            non_empty = 0
+
+        print(f"{batch_idx:>8} {input_len:>12} {non_empty:>12} {mem_len:>12}")
+
+        if input_len > max_input_len:
+            max_input_len = input_len
+        if mem_len > max_mem_len:
+            max_mem_len = mem_len
+
+        if input_len > 10000 or mem_len > 6000:
+            problematic.append((batch_idx, input_len, non_empty, mem_len))
+
+    print("-" * 50)
+    print(f"Max input_len: {max_input_len}")
+    print(f"Max mem_len: {max_mem_len}")
+
+    if problematic:
+        print(f"\n⚠️  Problematic batches:")
+        for b, ilen, mcnt, mlen in problematic:
+            print(f"  Batch {b}: input={ilen}, mem_count={mcnt}, mem_len={mlen}")
+
+
 if __name__ == "__main__":
-    try:
-        results = test_data_loading()
-        print("\nAll tests completed!")
-    except Exception as e:
-        print("\nTest failed with error:")
-        print(f"Error: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--rank", type=int, default=0)
+    parser.add_argument("--step", type=int, default=35)
+    parser.add_argument("--compare", action="store_true")
+    parser.add_argument("--test", action="store_true")
+    parser.add_argument("--real", action="store_true", help="Use real DistributedSampler")
+    args = parser.parse_args()
+    if args.compare:
+        print("Comparing steps...")
+        compare_steps()
+    elif args.test:
+        print("Testing data loading...")
+        test_data_loading()
+    elif args.real:
+        use_real_dataloader(target_rank=args.rank, target_step=args.step)
+    else:
+        simulate_rank_step(target_rank=args.rank, target_optimizer_step=args.step, verbose=True)
