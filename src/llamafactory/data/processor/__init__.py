@@ -16,7 +16,10 @@ from .feedback import FeedbackDatasetProcessor
 from .pairwise import PairwiseDatasetProcessor
 from .pretrain import PretrainDatasetProcessor
 from .processor_utils import DatasetProcessor
-from .supervised import PackedSupervisedDatasetProcessor, SupervisedDatasetProcessor, SupervisedDatasetProcessorWithMemory
+from .supervised import PackedSupervisedDatasetProcessor, SupervisedDatasetProcessor, LegacySupervisedDatasetProcessorWithMemory, MultiTurnSupervisedDatasetProcessorWithMemory
+
+# Alias for backward compatibility
+SupervisedDatasetProcessorWithMemory = MultiTurnSupervisedDatasetProcessorWithMemory
 from .unsupervised import UnsupervisedDatasetProcessor
 
 
@@ -28,5 +31,7 @@ __all__ = [
     "PretrainDatasetProcessor",
     "SupervisedDatasetProcessor",
     "UnsupervisedDatasetProcessor",
-    "SupervisedDatasetProcessorWithMemory",
+    "LegacySupervisedDatasetProcessorWithMemory",
+    "MultiTurnSupervisedDatasetProcessorWithMemory",
+    "SupervisedDatasetProcessorWithMemory",  # Alias for MultiTurn
 ]

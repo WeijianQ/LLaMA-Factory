@@ -31,7 +31,7 @@ from .processor import (
     PretrainDatasetProcessor,
     SupervisedDatasetProcessor,
     UnsupervisedDatasetProcessor,
-    SupervisedDatasetProcessorWithMemory,
+    SupervisedDatasetProcessorWithMemory,  # Alias for MultiTurnSupervisedDatasetProcessorWithMemory
 )
 
 
@@ -216,6 +216,7 @@ def _get_dataset_processor(
                 OptimizedTypedSequence.__init__ = __init__
             dataset_processor_class = PackedSupervisedDatasetProcessor
         elif data_args.has_memory:
+            # Uses MultiTurnSupervisedDatasetProcessorWithMemory which handles both single-turn and multi-turn
             dataset_processor_class = SupervisedDatasetProcessorWithMemory
         else:
             dataset_processor_class = SupervisedDatasetProcessor

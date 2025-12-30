@@ -32,6 +32,7 @@ class DatasetAttr:
     dataset_name: str
     formatting: Literal["alpaca", "sharegpt"] = "alpaca"
     ranking: bool = False
+    is_multi_turn: bool = False  # For multi-turn memory format (V4)
     # extra configs
     subset: Optional[str] = None
     split: str = "train"
@@ -72,6 +73,7 @@ class DatasetAttr:
     def join(self, attr: dict[str, Any]) -> None:
         self.set_attr("formatting", attr, default="alpaca")
         self.set_attr("ranking", attr, default=False)
+        self.set_attr("is_multi_turn", attr, default=False)
         self.set_attr("subset", attr)
         self.set_attr("split", attr, default="train")
         self.set_attr("folder", attr)

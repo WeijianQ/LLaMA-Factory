@@ -121,17 +121,46 @@ class SupervisedDatasetProcessor(DatasetProcessor):
 
     def print_data_example(self, example: dict[str, list[int]]) -> None:
         valid_labels = list(filter(lambda x: x != IGNORE_INDEX, example["labels"]))
-        print("input_ids:\n{}".format(example["input_ids"]))
-        print("inputs:\n{}".format(self.tokenizer.decode(example["input_ids"], skip_special_tokens=False)))
-        print("label_ids:\n{}".format(example["labels"]))
-        print(f"labels:\n{self.tokenizer.decode(valid_labels, skip_special_tokens=False)}")
+        # print("input_ids:\n{}".format(example["input_ids"]))
+        if len(example["input_ids"]) > 100:
+            print(f"input_ids:\n [{example['input_ids'][:5]}, ..., {example['input_ids'][-5:]}]; total {len(example['input_ids'])}")
+        else:
+            print(f"input_ids:\n {example['input_ids']}; total {len(example['input_ids'])}")
+        decoded_input = self.tokenizer.decode(example['input_ids'], skip_special_tokens=False)
+        if len(decoded_input) > 100:
+            print(f"inputs:\n [{decoded_input[:5]}, ..., {decoded_input[-5:]}]; total length{len(decoded_input)}")
+        else:
+            print(f"inputs:\n {decoded_input}; total length {len(decoded_input)}")
+
+        if len(example['labels']) > 100:
+            print(f"label_ids:\n [{example['labels'][:5]}, ..., {example['labels'][-5:]}]; total {len(example['labels'])}")
+        else:
+            print(f"label_ids:\n {example['labels']}; total {len(example['labels'])}")
+        if len(valid_labels) > 100:
+            print(f"valid_labels:\n [{valid_labels[:5]}, ..., {valid_labels[-5:]}]; total {len(valid_labels)}")
+        else:
+            print(f"valid_labels:\n {valid_labels}; total {len(valid_labels)}")
+        decoded_labels = self.tokenizer.decode(valid_labels, skip_special_tokens=False)
+        if len(decoded_labels) > 100:
+            print(f"labels:\n [{decoded_labels[:5]}, ..., {decoded_labels[-5:]}]; total length {len(decoded_labels)}")
+        else:
+            print(f"labels:\n {decoded_labels}; total length {len(decoded_labels)}")
 
 @dataclass
-class SupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
+class LegacySupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
+    """Legacy single-turn memory processor. Use MultiTurnSupervisedDatasetProcessorWithMemory instead."""
     mem_pad_token_id: int = -1
+    num_query_tokens: int = 1
 
     def __post_init__(self):
         self.mem_pad_token_id = self.tokenizer.convert_tokens_to_ids("<|mem_pad|>")
+        # Detect num_query_tokens by applying chat template with a single memory
+        test_msg = [{'role': 'user', 'content': [
+            {'type': 'memory_text', 'memory_text': {'text': 'test'}, 'is_memory': True}
+        ]}]
+        test_ids = self.tokenizer.apply_chat_template(test_msg, add_generation_prompt=True)
+        self.num_query_tokens = sum(1 for tid in test_ids if tid == self.mem_pad_token_id)
+        logger.info_rank0(f"Detected num_query_tokens={self.num_query_tokens} per memory")
 
     def preprocess_dataset(self, examples: dict[str, list[Any]]) -> dict[str, list[Any]]:
         # build inputs with format `<bos> X Y <eos>` and labels with format `<ignore> ... <ignore> Y <eos>`
@@ -147,6 +176,8 @@ class SupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
             # Check max_memory_num constraint
             memory_texts_check = examples.get("_memory", [None])[i] or []
             max_memory_num = getattr(self.data_args, 'max_memory_num', 10000)
+            if max_memory_num is None:
+                max_memory_num = 10000
             num_memory_to_drop = len(memory_texts_check) - max_memory_num
 
             # strange aligned
@@ -183,14 +214,22 @@ class SupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
 
             # Apply left truncation if sequence exceeds cutoff_len
             cutoff_len = self.data_args.cutoff_len
+            num_truncated_memories = 0
             if len(input_ids) > cutoff_len:
                 # Left truncation: keep the rightmost (most recent) tokens
                 truncate_len = len(input_ids) - cutoff_len
+                # Count how many mem_pad tokens are in the truncated portion
+                truncated_mem_pad_count = sum(1 for tid in input_ids[:truncate_len] if tid == self.mem_pad_token_id)
+                # Calculate how many memories were truncated (including partial ones)
+                # If a memory is partially truncated, we must discard it entirely
+                num_truncated_memories = (truncated_mem_pad_count + self.num_query_tokens - 1) // self.num_query_tokens  # ceiling division
                 input_ids = input_ids[truncate_len:]
                 labels = labels[truncate_len:]
 
             # Count valid memory placeholders in truncated sequence
-            valid_mem_num = sum(1 for token_id in input_ids if token_id == self.mem_pad_token_id) #TODO multi mem pad not supported
+            remaining_mem_pad_count = sum(1 for token_id in input_ids if token_id == self.mem_pad_token_id)
+            # Number of complete memories remaining (floor division - only count complete ones)
+            valid_mem_num = remaining_mem_pad_count // self.num_query_tokens
 
             model_inputs["input_ids"].append(input_ids)
             model_inputs["attention_mask"].append([1] * len(input_ids))
@@ -201,8 +240,12 @@ class SupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
             # Truncate memory num before encoding: keep the rightmost (most recent) memories
             if num_memory_to_drop > 0:
                 memory_texts = memory_texts[num_memory_to_drop:]
-            if valid_mem_num < len(memory_texts):
-                memory_texts = memory_texts[-valid_mem_num:] if valid_mem_num > 0 else []
+            # Drop memories that were truncated from the left (including partially truncated)
+            if num_truncated_memories > 0:
+                memory_texts = memory_texts[num_truncated_memories:]
+            # Ensure alignment: keep only as many memories as we have complete placeholders
+            if len(memory_texts) > valid_mem_num:
+                memory_texts = memory_texts[:valid_mem_num]
 
             memory_input_ids = []
             memory_attention_mask = []
@@ -219,6 +262,196 @@ class SupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
             model_inputs["memory_attention_mask"].append(memory_attention_mask)
             model_inputs["task_type"].append(examples["_task_type"][i])
         return model_inputs
+
+@dataclass
+class MultiTurnSupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
+    """Processor for V4 multi-turn format where each round is a separate user/assistant turn.
+
+    This processor handles multi-turn conversations with memory, properly masking
+    each user turn and training on each assistant turn.
+    """
+    mem_pad_token_id: int = -1
+    num_query_tokens: int = 1
+
+    def __post_init__(self):
+        self.mem_pad_token_id = self.tokenizer.convert_tokens_to_ids("<|mem_pad|>")
+        # Detect num_query_tokens by applying chat template with a single memory
+        test_msg = [{'role': 'user', 'content': [
+            {'type': 'memory_text', 'memory_text': {'text': 'test'}, 'is_memory': True}
+        ]}]
+        test_ids = self.tokenizer.apply_chat_template(test_msg, add_generation_prompt=True)
+        self.num_query_tokens = sum(1 for tid in test_ids if tid == self.mem_pad_token_id)
+        logger.info_rank0(f"Detected num_query_tokens={self.num_query_tokens} per memory")
+
+    def _process_user_content(self, content: list, num_memory_to_drop: int, current_mem_count: int) -> tuple[list, int]:
+        """Process user message content, handling memory_text items.
+
+        Args:
+            content: List of content items from user message
+            num_memory_to_drop: Number of memories to skip (for max_memory_num constraint)
+            current_mem_count: Current count of memories processed so far
+
+        Returns:
+            Tuple of (processed content list, updated memory count)
+        """
+        if not isinstance(content, list):
+            return content, current_mem_count
+
+        processed_content = []
+        for cnt_item in content:
+            if isinstance(cnt_item, dict):
+                if cnt_item.get('type', '') == 'text':
+                    processed_content.append({'type': 'text', 'text': cnt_item['text']})
+                elif cnt_item.get('type', '') == 'memory_text':
+                    current_mem_count += 1
+                    if current_mem_count <= num_memory_to_drop:
+                        continue
+                    else:
+                        is_memory = cnt_item.get('is_memory')
+                        if is_memory is None:
+                            is_memory = True
+                        processed_content.append({
+                            'type': 'memory_text',
+                            'memory_text': {'text': cnt_item['memory_text']['text']},
+                            'is_memory': is_memory
+                        })
+            else:
+                processed_content.append(cnt_item)
+
+        return processed_content, current_mem_count
+
+    def preprocess_dataset(self, examples: dict[str, list[Any]]) -> dict[str, list[Any]]:
+        """Preprocess multi-turn dataset with memory.
+
+        For multi-turn conversations:
+        - Each user turn is masked (IGNORE_INDEX)
+        - Each assistant turn is trained on
+        - Memory texts are extracted and encoded separately
+        """
+        model_inputs = defaultdict(list)
+        # from ...debug_utils import wait_for_debugger
+        # wait_for_debugger()
+        for i in range(len(examples["_prompt"])):
+            prompt = examples["_prompt"][i]
+            response = examples["_response"][i]
+
+            # Validate: prompt should have odd number of messages (user, assistant, ..., user)
+            # and response should have exactly 1 message (the final assistant response)
+            if len(prompt) % 2 != 1 or len(response) != 1:
+                logger.warning_rank0(
+                    "Dropped invalid example: {}".format(prompt + response)
+                )
+                continue
+
+            # Check max_memory_num constraint
+            memory_texts_check = examples.get("_memory", [None])[i] or []
+            max_memory_num = getattr(self.data_args, 'max_memory_num', 10000)
+            if max_memory_num is None:
+                max_memory_num = 10000
+            num_memory_to_drop = max(0, len(memory_texts_check) - max_memory_num)
+
+            # Build the full conversation with processed content
+            messages = []
+            system = examples["_system"][i]
+            if system:
+                messages.append({'role': 'system', 'content': system})
+
+            current_mem_count = 0
+            # Process prompt messages (alternating user/assistant)
+            for msg in prompt:
+                if msg['role'] == 'user':
+                    processed_content, current_mem_count = self._process_user_content(
+                        msg['content'], num_memory_to_drop, current_mem_count
+                    )
+                    messages.append({'role': 'user', 'content': processed_content})
+                else:
+                    messages.append({'role': 'assistant', 'content': msg['content']})
+
+            # Process final response
+            messages.append({'role': 'assistant', 'content': response[0]['content']})
+
+            # Tokenize the full conversation
+            input_ids = self.tokenizer.apply_chat_template(messages)
+
+            # Compute labels by masking user turns and keeping assistant turns
+            # We need to tokenize incrementally to find boundaries
+            # IMPORTANT: Reuse the already-processed `messages` list to ensure consistency
+            labels = []
+            current_pos = 0
+
+            # Process each message in the already-built messages list
+            conversation_so_far = []
+            for msg in messages:
+                conversation_so_far.append(msg)
+
+                if msg['role'] == 'system' or msg['role'] == 'user':
+                    # Get position after this message (with generation prompt for user/system)
+                    tokens_so_far = self.tokenizer.apply_chat_template(
+                        conversation_so_far, add_generation_prompt=True
+                    )
+                    new_pos = len(tokens_so_far)
+                    # Mask system/user turn
+                    labels.extend([IGNORE_INDEX] * (new_pos - current_pos))
+                    current_pos = new_pos
+
+                else:  # assistant
+                    # Get position after this assistant message
+                    tokens_so_far = self.tokenizer.apply_chat_template(conversation_so_far)
+                    new_pos = len(tokens_so_far)
+                    # Train on assistant turn - use actual token IDs
+                    labels.extend(input_ids[current_pos:new_pos])
+                    current_pos = new_pos
+
+            # Apply left truncation if sequence exceeds cutoff_len
+            cutoff_len = self.data_args.cutoff_len
+            num_truncated_memories = 0
+            if len(input_ids) > cutoff_len:
+                truncate_len = len(input_ids) - cutoff_len
+                # Count how many mem_pad tokens are in the truncated portion
+                truncated_mem_pad_count = sum(1 for tid in input_ids[:truncate_len] if tid == self.mem_pad_token_id)
+                # Calculate how many memories were truncated (including partial ones)
+                # If a memory is partially truncated, we must discard it entirely
+                num_truncated_memories = (truncated_mem_pad_count + self.num_query_tokens - 1) // self.num_query_tokens  # ceiling division
+                input_ids = input_ids[truncate_len:]
+                labels = labels[truncate_len:]
+
+            # Count valid memory placeholders in truncated sequence
+            remaining_mem_pad_count = sum(1 for token_id in input_ids if token_id == self.mem_pad_token_id)
+            # Number of complete memories remaining (floor division - only count complete ones)
+            valid_mem_num = remaining_mem_pad_count // self.num_query_tokens
+
+            model_inputs["input_ids"].append(input_ids)
+            model_inputs["attention_mask"].append([1] * len(input_ids))
+            model_inputs["labels"].append(labels)
+
+            # Encode memory texts
+            memory_texts = examples.get("_memory", [None])[i] or []
+            if num_memory_to_drop > 0:
+                memory_texts = memory_texts[num_memory_to_drop:]
+            # Drop memories that were truncated from the left (including partially truncated)
+            if num_truncated_memories > 0:
+                memory_texts = memory_texts[num_truncated_memories:]
+            # Ensure alignment: keep only as many memories as we have complete placeholders
+            if len(memory_texts) > valid_mem_num:
+                memory_texts = memory_texts[:valid_mem_num]
+
+            memory_input_ids = []
+            memory_attention_mask = []
+            memory_truncate_length = getattr(self.data_args, 'memory_truncate_length', 1024) or 1024
+            for mem_text in memory_texts:
+                m_ids = self.tokenizer.encode(mem_text, add_special_tokens=False)
+                if len(m_ids) > memory_truncate_length:
+                    m_ids = m_ids[-memory_truncate_length:]
+                memory_input_ids.append(m_ids)
+                memory_attention_mask.append([1] * len(m_ids))
+
+            model_inputs["memory_input_ids"].append(memory_input_ids)
+            model_inputs["memory_attention_mask"].append(memory_attention_mask)
+            model_inputs["task_type"].append(examples["_task_type"][i])
+            
+
+        return model_inputs
+
 
 @dataclass
 class PackedSupervisedDatasetProcessor(SupervisedDatasetProcessor):
