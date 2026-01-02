@@ -385,15 +385,14 @@ class OpenAIMemoryDatasetConverter(DatasetConverter):
         """
         memory_texts = []
         for msg in messages:
-            if msg.get(self.dataset_attr.role_tag) == self.dataset_attr.user_tag:
-                content = msg.get(self.dataset_attr.content_tag)
-                if isinstance(content, list):
-                    for content_item in content:
-                        if isinstance(content_item, dict):
-                            if content_item.get("type") == "memory_text":
-                                memory_data = content_item.get("memory_text", {})
-                                if isinstance(memory_data, dict) and "text" in memory_data:
-                                    memory_texts.append(memory_data["text"])
+            content = msg.get(self.dataset_attr.content_tag)
+            if isinstance(content, list):
+                for content_item in content:
+                    if isinstance(content_item, dict):
+                        if content_item.get("type") == "memory_text":
+                            memory_data = content_item.get("memory_text", {})
+                            if isinstance(memory_data, dict) and "text" in memory_data:
+                                memory_texts.append(memory_data["text"])
         return memory_texts
 
 
@@ -521,6 +520,8 @@ class MultiTurnOpenAIMemoryDatasetConverter(DatasetConverter):
         if isinstance(messages, str):
             messages = json.loads(messages)
 
+        all_memory_texts = []
+
         # Handle system message
         if (
             self.dataset_attr.system_tag
@@ -529,11 +530,11 @@ class MultiTurnOpenAIMemoryDatasetConverter(DatasetConverter):
         ):
             system = messages[0][self.dataset_attr.content_tag]
             messages = messages[1:]
+            all_memory_texts.extend(self._extract_memory_texts_from_turn(system))
         else:
             system = example.get(self.dataset_attr.system, "") if self.dataset_attr.system else ""
 
         aligned_messages = []
-        all_memory_texts = []
         broken_data = False
 
         for turn_idx, message in enumerate(messages):
@@ -546,10 +547,8 @@ class MultiTurnOpenAIMemoryDatasetConverter(DatasetConverter):
                 broken_data = True
                 break
 
-            # For user messages, extract memory texts and keep content as-is for processor
-            if role == self.dataset_attr.user_tag:
-                memory_texts = self._extract_memory_texts_from_turn(content)
-                all_memory_texts.extend(memory_texts)
+            memory_texts = self._extract_memory_texts_from_turn(content)
+            all_memory_texts.extend(memory_texts)
 
             aligned_messages.append(
                 {

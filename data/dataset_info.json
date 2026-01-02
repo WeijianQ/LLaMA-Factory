@@ -973,7 +973,7 @@
     }
   },
   "webarena_memory_mixed": {
-    "file_name": "../remake_dataset/webarena/reconstruction_1to1/webarena_mixed.parquet",
+    "file_name": "../remake_dataset/webarena/reconstruction_1to1/webarena_mixed_new.parquet",
     "formatting": "openai_memory_multiturn",
     "columns": {
       "messages": "messages"
@@ -987,7 +987,7 @@
     }
   },
   "webarena_memory_mixed_debug": {
-    "file_name": "../remake_dataset/webarena/reconstruction_1to1/webarena_mixed_100.parquet",
+    "file_name": "../remake_dataset/webarena/reconstruction_1to1/webarena_mixed_100_new.parquet",
     "formatting": "openai_memory_multiturn",
     "columns": {
       "messages": "messages"

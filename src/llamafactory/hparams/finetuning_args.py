@@ -485,6 +485,17 @@ class FinetuningArguments(
         default=False,
         metadata={"help": "Whether to use the DFT loss."},
     )
+    use_per_seq_loss: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "Whether to use per-sequence loss normalization. "
+                "Each sample's loss is averaged over its valid tokens first, "
+                "then averaged across samples. This ensures samples with different "
+                "label lengths contribute equally to the gradient."
+            )
+        },
+    )
     freeze_vision_tower: bool = field(
         default=True,
         metadata={"help": "Whether ot not to freeze the vision tower in MLLM training."},
@@ -538,9 +549,9 @@ class FinetuningArguments(
             )
         },
     )
-    enable_backbone_grad: bool = field(
+    disable_memory_grad_for_action: bool = field(
         default=False,
-        metadata={"help": "Whether to enable gradient for backbone model when encoding memory."},
+        metadata={"help": "Whether or not to disable the gradient of the memory for action tokens."},
     )
 
     def __post_init__(self):

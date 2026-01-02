@@ -282,8 +282,12 @@ class MultiTurnSupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
         test_ids = self.tokenizer.apply_chat_template(test_msg, add_generation_prompt=True)
         self.num_query_tokens = sum(1 for tid in test_ids if tid == self.mem_pad_token_id)
         logger.info_rank0(f"Detected num_query_tokens={self.num_query_tokens} per memory")
+        self.only_predict_last_turn = getattr(self.data_args, 'only_predict_last_turn', False)
+        if self.only_predict_last_turn:
+            logger.info_rank0(f"Only predict last turn")
 
-    def _process_user_content(self, content: list, num_memory_to_drop: int, current_mem_count: int) -> tuple[list, int]:
+
+    def _process_system_and_user_content(self, content: list, num_memory_to_drop: int, current_mem_count: int) -> tuple[list, int]:
         """Process user message content, handling memory_text items.
 
         Args:
@@ -294,8 +298,6 @@ class MultiTurnSupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
         Returns:
             Tuple of (processed content list, updated memory count)
         """
-        if not isinstance(content, list):
-            return content, current_mem_count
 
         processed_content = []
         for cnt_item in content:
@@ -329,6 +331,8 @@ class MultiTurnSupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
         - Memory texts are extracted and encoded separately
         """
         model_inputs = defaultdict(list)
+        num_dropped_examples = 0
+        original_num_examples = len(examples["_prompt"])
         # from ...debug_utils import wait_for_debugger
         # wait_for_debugger()
         for i in range(len(examples["_prompt"])):
@@ -341,6 +345,7 @@ class MultiTurnSupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
                 logger.warning_rank0(
                     "Dropped invalid example: {}".format(prompt + response)
                 )
+                num_dropped_examples += 1
                 continue
 
             # Check max_memory_num constraint
@@ -353,17 +358,21 @@ class MultiTurnSupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
             # Build the full conversation with processed content
             messages = []
             system = examples["_system"][i]
-            if system:
-                messages.append({'role': 'system', 'content': system})
+            
 
             current_mem_count = 0
+            if system:
+                processed_content, current_mem_count = self._process_system_and_user_content(
+                    system, num_memory_to_drop, current_mem_count
+                )
+                messages.append({'role': 'system', 'content': processed_content})
             # Process prompt messages (alternating user/assistant)
             for msg in prompt:
-                if msg['role'] == 'user':
-                    processed_content, current_mem_count = self._process_user_content(
+                if msg['role'] in ['user', 'system']:
+                    processed_content, current_mem_count = self._process_system_and_user_content(
                         msg['content'], num_memory_to_drop, current_mem_count
                     )
-                    messages.append({'role': 'user', 'content': processed_content})
+                    messages.append({'role': msg['role'], 'content': processed_content})
                 else:
                     messages.append({'role': 'assistant', 'content': msg['content']})
 
@@ -374,9 +383,8 @@ class MultiTurnSupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
             input_ids = self.tokenizer.apply_chat_template(messages)
 
             # Compute labels by masking user turns and keeping assistant turns
-            only_predict_last_turn = getattr(self.data_args, 'only_predict_last_turn', False)
 
-            if only_predict_last_turn:
+            if self.only_predict_last_turn:
                 # Simplified: only train on the last assistant turn
                 assert messages[-1]['role'] == 'assistant', "Last message must be assistant"
                 # Tokenize all but last message with generation prompt to get source length
@@ -411,23 +419,32 @@ class MultiTurnSupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
                         labels.extend(input_ids[current_pos:new_pos])
                         current_pos = new_pos
 
-            # Apply left truncation if sequence exceeds cutoff_len
+            # Apply right truncation if sequence exceeds cutoff_len
             cutoff_len = self.data_args.cutoff_len
-            num_truncated_memories = 0
-            if len(input_ids) > cutoff_len:
-                truncate_len = len(input_ids) - cutoff_len
-                # Count how many mem_pad tokens are in the truncated portion
-                truncated_mem_pad_count = sum(1 for tid in input_ids[:truncate_len] if tid == self.mem_pad_token_id)
-                # Calculate how many memories were truncated (including partial ones)
-                # If a memory is partially truncated, we must discard it entirely
-                num_truncated_memories = (truncated_mem_pad_count + self.num_query_tokens - 1) // self.num_query_tokens  # ceiling division
-                input_ids = input_ids[truncate_len:]
-                labels = labels[truncate_len:]
+            original_input_len = len(input_ids)
+            if original_input_len > cutoff_len:
+                input_ids = input_ids[:cutoff_len]
+                labels = labels[:cutoff_len]
+                # Count how many mem_pad tokens remain after truncation
+                remaining_mem_pad_count = sum(1 for tid in input_ids if tid == self.mem_pad_token_id)
+                # If cut right in the middle of a memory, discard the incomplete trailing tokens
+                trailing_mem_pad_count = remaining_mem_pad_count % self.num_query_tokens
+                if trailing_mem_pad_count != 0:
+                    input_ids = input_ids[:-trailing_mem_pad_count]
+                    labels = labels[:-trailing_mem_pad_count]
 
-            # Count valid memory placeholders in truncated sequence
-            remaining_mem_pad_count = sum(1 for token_id in input_ids if token_id == self.mem_pad_token_id)
-            # Number of complete memories remaining (floor division - only count complete ones)
+            # Count valid memory placeholders (must be after truncation)
+            remaining_mem_pad_count = sum(1 for tid in input_ids if tid == self.mem_pad_token_id)
+            assert remaining_mem_pad_count % self.num_query_tokens == 0, \
+                f"Memory pad count {remaining_mem_pad_count} not divisible by {self.num_query_tokens}"
             valid_mem_num = remaining_mem_pad_count // self.num_query_tokens
+
+            # Check if there are valid labels after truncation - drop if none
+            valid_label_count = sum(1 for l in labels if l != IGNORE_INDEX)
+            if valid_label_count == 0:
+                logger.warning_rank0(f"Dropped example with no valid labels after truncation (cutoff_len={cutoff_len}) with original input_ids length: {original_input_len}")
+                num_dropped_examples += 1
+                continue
 
             model_inputs["input_ids"].append(input_ids)
             model_inputs["attention_mask"].append([1] * len(input_ids))
@@ -437,9 +454,6 @@ class MultiTurnSupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
             memory_texts = examples.get("_memory", [None])[i] or []
             if num_memory_to_drop > 0:
                 memory_texts = memory_texts[num_memory_to_drop:]
-            # Drop memories that were truncated from the left (including partially truncated)
-            if num_truncated_memories > 0:
-                memory_texts = memory_texts[num_truncated_memories:]
             # Ensure alignment: keep only as many memories as we have complete placeholders
             if len(memory_texts) > valid_mem_num:
                 memory_texts = memory_texts[:valid_mem_num]
@@ -457,8 +471,9 @@ class MultiTurnSupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
             model_inputs["memory_input_ids"].append(memory_input_ids)
             model_inputs["memory_attention_mask"].append(memory_attention_mask)
             model_inputs["task_type"].append(examples["_task_type"][i])
-            
 
+        if num_dropped_examples > 0:
+            logger.info(f"Dropped {num_dropped_examples} examples out of {original_num_examples}")
         return model_inputs
 
 
