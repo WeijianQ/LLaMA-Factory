@@ -17,12 +17,13 @@
 
 import json
 import os
+from collections import defaultdict
 from types import MethodType
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 import numpy as np
 import torch
-from transformers import Seq2SeqTrainer
+from transformers import Seq2SeqTrainer, Trainer
 from typing_extensions import override
 
 from ...extras import logging
@@ -71,6 +72,11 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
             self.model_accepts_loss_kwargs = False
 
         self.finetuning_args = finetuning_args
+        self.use_per_seq_loss = getattr(self.finetuning_args, 'use_per_seq_loss', False)
+        self.disable_memory_grad_for_action = getattr(self.finetuning_args, 'disable_memory_grad_for_action', False)
+        # Initialize metrics storage for per-task-type loss logging
+        self._stored_metrics: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
+
         if gen_kwargs is not None:
             # https://github.com/huggingface/transformers/blob/v4.45.0/src/transformers/trainer_seq2seq.py#L287
             self._gen_kwargs = gen_kwargs
@@ -114,26 +120,66 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
         return super()._get_train_sampler(*args, **kwargs)
 
     @override
-    def compute_loss(self, model, inputs, *args, **kwargs):
-        # Debug: save inputs to pickle on rank 0
-        # import torch.distributed as dist
-        # import pickle
-        # if not dist.is_initialized() or dist.get_rank() == 0:
-        #     debug_path = "debug_inputs.pkl"
-        #     with open(debug_path, "wb") as f:
-        #         # Move tensors to CPU for pickle
-        #         inputs_cpu = {}
-        #         for k, v in inputs.items():
-        #             if isinstance(v, torch.Tensor):
-        #                 inputs_cpu[k] = v.detach().cpu()
-        #             else:
-        #                 inputs_cpu[k] = v
-        #         pickle.dump(inputs_cpu, f)
-        #     logger.info_rank0(f"Saved debug inputs to {debug_path}")
-        #     raise ValueError("Debug: stop here")
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        """
+        Compute loss with per-sequence normalization.
 
+        Each sample's loss is first averaged over its valid tokens,
+        then these per-sample losses are averaged across the batch.
+        This ensures samples with different label lengths contribute equally.
+        """
+        if not self.use_per_seq_loss:
+            return super().compute_loss(model, inputs, return_outputs=return_outputs, **kwargs)
 
-        return super().compute_loss(model, inputs, *args, **kwargs)
+        # Extract task_type before forward pass (list of strings, not tensor)
+        batch_task_types = inputs.pop("task_type", None)
+        if self.disable_memory_grad_for_action and batch_task_types is not None:
+            disable_memory_grad_tensor = torch.tensor(
+                [tt == "action" for tt in batch_task_types],
+                dtype=torch.bool,
+                device=model.device
+            )
+            inputs["disable_memory_grad_tensor"] = disable_memory_grad_tensor
+
+        # Forward pass (pop labels to avoid model computing loss internally)
+        labels = inputs.pop("labels")
+        outputs = model(**inputs)
+        logits = outputs.logits  # (B, L, V)
+
+        B, L, V = logits.shape
+
+        # Shift for causal LM: predict next token
+        shift_logits = logits[..., :-1, :].contiguous()  # (B, L-1, V)
+        shift_labels = labels[..., 1:].contiguous()       # (B, L-1)
+
+        # Compute per-token cross entropy loss
+        ce_per_token = torch.nn.functional.cross_entropy(
+            shift_logits.view(-1, V),
+            shift_labels.view(-1),
+            ignore_index=IGNORE_INDEX,
+            reduction='none'
+        ).view(B, L - 1)  # (B, L-1)
+
+        # Compute valid mask and count per sample
+        valid_mask = (shift_labels != IGNORE_INDEX)  # (B, L-1)
+        valid_cnt = valid_mask.sum(dim=1).clamp_min(1)  # (B,) - clamp to avoid div by 0
+
+        # Per-sample mean loss (average over valid tokens in each sample)
+        ce_sum_per_sample = (ce_per_token * valid_mask).sum(dim=1)  # (B,)
+        loss_per_sample = ce_sum_per_sample / valid_cnt  # (B,)
+
+        # Average across samples in batch
+        loss = loss_per_sample.mean()
+
+        # Store per-task-type losses for logging
+        if batch_task_types is not None:
+            for i, tt in enumerate(batch_task_types):
+                if tt in ("action", "reconstruction"):
+                    self._stored_metrics["train"][f"{tt}_loss"].append(
+                        loss_per_sample[i].detach().cpu().item()
+                    )
+
+        return (loss, outputs) if return_outputs else loss
         # batch_task_types = inputs.pop("task_type", None)
         # kwargs['return_outputs'] = True
         # loss, outputs = super().compute_loss(model, inputs, *args, **kwargs)
@@ -277,3 +323,34 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
             for text, pred, label in zip(decoded_inputs, decoded_preds, decoded_labels):
                 f.write(json.dumps({"prompt": text, "predict": pred, "label": label}, ensure_ascii=False) + "\n")
 
+    @override
+    def log(self, logs: dict[str, float], *args, **kwargs) -> None:
+        r"""Log metrics including per-task-type losses with proper distributed reduction."""
+        train_eval = "train" if "loss" in logs else "eval"
+
+        # Collect stored metrics
+        key_list, metric_list = [], []
+        for key, metrics in self._stored_metrics[train_eval].items():
+            if metrics:
+                key_list.append(key)
+                metric_list.append(torch.tensor(metrics, dtype=torch.float).mean().item())
+
+        # Clear stored metrics
+        self._stored_metrics[train_eval].clear()
+
+        # Pad for all_reduce (distributed training requires fixed tensor size)
+        if len(metric_list) < 10:
+            for i in range(10 - len(metric_list)):
+                key_list.append(f"dummy_{i}")
+                metric_list.append(0.0)
+
+        # Reduce across all processes
+        metric_tensor = torch.tensor(metric_list, dtype=torch.float).to(self.accelerator.device)
+        metric_tensor = self.accelerator.reduce(metric_tensor, "mean")
+
+        # Add to logs
+        for key, val in zip(key_list, metric_tensor.tolist()):
+            if not key.startswith("dummy_"):
+                logs[key] = val
+
+        return Trainer.log(self, logs, *args, **kwargs)

@@ -180,11 +180,15 @@ def load_model(
                 load_class = AutoModelForTextToWaveform
             # elif model_args.is_memory_model:
             #     load_class = _load_memory_model(model_args)["model_class"]
-            elif finetuning_args.enable_backbone_grad:
+            elif config.architectures[0] == "Qwen3_MemoryForCausalLM":
                 import sys
-                sys.path.insert(0, "/fs/ess/PAS1576/qwjian/agent-memory-lab/external/LLaMA-Factory")
-                from hf_models.Qwen3.modeling_qwen3_memory import Qwen3_MemoryForCausalLM
                 import inspect
+                # This file: src/llamafactory/model/loader.py
+                # hf_models is at: LLaMA-Factory/hf_models (3 levels up from this file's dir)
+                this_file = inspect.getfile(inspect.currentframe())
+                llama_factory_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(this_file))))
+                sys.path.insert(0, llama_factory_root)
+                from hf_models.Qwen3.modeling_qwen3_memory import Qwen3_MemoryForCausalLM
                 logger.info_rank0(f"Qwen3_MemoryForCausalLM loaded from: {inspect.getfile(Qwen3_MemoryForCausalLM)}")
                 load_class = Qwen3_MemoryForCausalLM
             else:
