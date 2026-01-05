@@ -37,7 +37,6 @@ from .model_utils.mod import convert_pretrained_model_to_mod, load_mod_pretraine
 from .model_utils.unsloth import load_unsloth_pretrained_model
 from .model_utils.valuehead import load_valuehead_params
 from .patcher import patch_config, patch_model, patch_processor, patch_tokenizer, patch_valuehead_model
-
 # def _load_memory_model(model_args: "ModelArguments") -> dict[str, Any]:
 #     import sys
 #     custom_hf_models_path = "/fs/ess/PAS1576/qwjian/agent-memory-lab"
@@ -121,10 +120,12 @@ def load_tokenizer(model_args: "ModelArguments") -> "TokenizerModule":
 
     if processor is not None:
         patch_processor(processor, tokenizer, model_args)
-    if model_args.is_memory_model:
+    if model_args.is_memory_model or model_args.is_memory_model_lite:
         processor = None
+    if model_args.is_memory_model_lite:
+        from .tokenizer_utils import patch_tokenizer_for_memory_model_lite
+        patch_tokenizer_for_memory_model_lite(tokenizer, model_args)
     return {"tokenizer": tokenizer, "processor": processor}
-
 
 def load_config(model_args: "ModelArguments") -> "PretrainedConfig":
     r"""Load model config."""
@@ -191,6 +192,19 @@ def load_model(
                 from hf_models.Qwen3.modeling_qwen3_memory import Qwen3_MemoryForCausalLM
                 logger.info_rank0(f"Qwen3_MemoryForCausalLM loaded from: {inspect.getfile(Qwen3_MemoryForCausalLM)}")
                 load_class = Qwen3_MemoryForCausalLM
+            elif model_args.is_memory_model_lite:
+                import sys
+                import inspect
+                # This file: src/llamafactory/model/loader.py
+                # hf_models is at: LLaMA-Factory/hf_models (3 levels up from this file's dir)
+                this_file = inspect.getfile(inspect.currentframe())
+                llama_factory_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(this_file))))
+                sys.path.insert(0, llama_factory_root)
+                from hf_models.Qwen3_lite.modeling_qwen3_memory import Qwen3_MemoryForCausalLM
+                logger.info_rank0(f"Qwen3_MemoryForCausalLM loaded from: {inspect.getfile(Qwen3_MemoryForCausalLM)}")
+                load_class = Qwen3_MemoryForCausalLM
+                init_kwargs["num_query_tokens"] = model_args.num_query_tokens
+                init_kwargs["memory_pad_token_id"] = tokenizer.memory_pad_token_id
             else:
                 load_class = AutoModelForCausalLM
 

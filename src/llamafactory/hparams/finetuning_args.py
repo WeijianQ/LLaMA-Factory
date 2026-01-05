@@ -553,6 +553,14 @@ class FinetuningArguments(
         default=False,
         metadata={"help": "Whether or not to disable the gradient of the memory for action tokens."},
     )
+    reconstruction_diff_loss: bool = field(
+        default=False,
+        metadata={"help": "Whether to use reconstruction diff loss."},
+    )
+    disable_encoding_backbone_grad: bool = field(
+        default=True,
+        metadata={"help": "Whether to disable the gradient of the backbone for encoding."},
+    )
 
     def __post_init__(self):
         def split_arg(arg):

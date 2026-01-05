@@ -16,7 +16,7 @@ from .loader import load_config, load_model, load_tokenizer
 from .model_utils.misc import find_all_linear_modules
 from .model_utils.quantization import QuantizationMethod
 from .model_utils.valuehead import load_valuehead_params
-
+from .tokenizer_utils import patch_tokenizer_for_memory_model_lite
 
 __all__ = [
     "QuantizationMethod",
@@ -25,4 +25,5 @@ __all__ = [
     "load_model",
     "load_tokenizer",
     "load_valuehead_params",
+    "patch_tokenizer_for_memory_model_lite",
 ]

@@ -512,6 +512,14 @@ class ModelArguments(
         default=False,
         metadata={"help": "Whether the model is a memory model."},
     )
+    is_memory_model_lite: bool = field(
+        default=False,
+        metadata={"help": "Whether the model is a lite memory model."},
+    )
+    num_query_tokens: int = field(
+        default=1,
+        metadata={"help": "The number of query tokens for the memory model."},
+    )
 
 
     def __post_init__(self):
