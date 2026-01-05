@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 
+from rapidfuzz import distance as rapidfuzz_distance
+
 from ...extras import logging
 from ...extras.constants import IGNORE_INDEX
 from .processor_utils import DatasetProcessor, greedy_knapsack, infer_seqlen
@@ -322,6 +324,39 @@ class MultiTurnSupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
 
         return processed_content, current_mem_count
 
+    def _compute_label_diff_mask(self, messages: list, input_ids: list, source_len: int, task_type: str) -> list:
+        """Compute label diff mask for reconstruction loss.
+
+        Returns:
+            List of mask values:
+            - IGNORE_INDEX for source (not trained on)
+            - 1.0 for diff tokens (unique to target)
+            - -1.0 for common tokens (shared with demo)
+        """
+        if task_type != "reconstruction":
+            # Non-reconstruction: all target tokens are diff (weight 1.0)
+            return [IGNORE_INDEX] * source_len + [1.0] * (len(input_ids) - source_len)
+
+        # Reconstruction task: compute diff mask using rapidfuzz LCS
+        assert len(messages) == 5, f"Reconstruction should have 5 messages (sys, user, asst, user, asst), got {len(messages)}"
+
+        # Extract demo observation from ICL example (messages[1] is first user turn with memory)
+        demo_str = messages[1]['content'][0]['memory_text']['text']
+        demo_tokens = self.tokenizer.encode(demo_str, add_special_tokens=False)
+        target_tokens = input_ids[source_len:]
+
+        # Compute LCS alignment using rapidfuzz (~2ms for 5k tokens)
+        ops = rapidfuzz_distance.Levenshtein.opcodes(demo_tokens, target_tokens)
+
+        # Build mask: 1.0 for diff, -1.0 for common
+        mask = [1] * len(target_tokens)  # default diff
+        for tag, i1, i2, j1, j2 in ops:
+            if tag == 'equal':
+                for k in range(j1, j2):
+                    mask[k] = -1  # common
+
+        return [IGNORE_INDEX] * source_len + mask
+
     def preprocess_dataset(self, examples: dict[str, list[Any]]) -> dict[str, list[Any]]:
         """Preprocess multi-turn dataset with memory.
 
@@ -333,8 +368,6 @@ class MultiTurnSupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
         model_inputs = defaultdict(list)
         num_dropped_examples = 0
         original_num_examples = len(examples["_prompt"])
-        # from ...debug_utils import wait_for_debugger
-        # wait_for_debugger()
         for i in range(len(examples["_prompt"])):
             prompt = examples["_prompt"][i]
             response = examples["_response"][i]
@@ -392,6 +425,7 @@ class MultiTurnSupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
                     messages[:-1], add_generation_prompt=True
                 ))
                 labels = [IGNORE_INDEX] * source_len + input_ids[source_len:]
+                label_diff_mask = self._compute_label_diff_mask(messages, input_ids, source_len, examples["_task_type"][i])
             else:
                 # Train on all assistant turns - need to iterate through messages
                 labels = []
@@ -419,12 +453,16 @@ class MultiTurnSupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
                         labels.extend(input_ids[current_pos:new_pos])
                         current_pos = new_pos
 
+                # For multi-turn, use uniform weights (diff mask only applies to reconstruction with only_predict_last_turn)
+                label_diff_mask = [IGNORE_INDEX if l == IGNORE_INDEX else 1.0 for l in labels]
+
             # Apply right truncation if sequence exceeds cutoff_len
             cutoff_len = self.data_args.cutoff_len
             original_input_len = len(input_ids)
             if original_input_len > cutoff_len:
                 input_ids = input_ids[:cutoff_len]
                 labels = labels[:cutoff_len]
+                label_diff_mask = label_diff_mask[:cutoff_len]
                 # Count how many mem_pad tokens remain after truncation
                 remaining_mem_pad_count = sum(1 for tid in input_ids if tid == self.mem_pad_token_id)
                 # If cut right in the middle of a memory, discard the incomplete trailing tokens
@@ -432,6 +470,7 @@ class MultiTurnSupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
                 if trailing_mem_pad_count != 0:
                     input_ids = input_ids[:-trailing_mem_pad_count]
                     labels = labels[:-trailing_mem_pad_count]
+                    label_diff_mask = label_diff_mask[:-trailing_mem_pad_count]
 
             # Count valid memory placeholders (must be after truncation)
             remaining_mem_pad_count = sum(1 for tid in input_ids if tid == self.mem_pad_token_id)
@@ -448,7 +487,9 @@ class MultiTurnSupervisedDatasetProcessorWithMemory(SupervisedDatasetProcessor):
 
             model_inputs["input_ids"].append(input_ids)
             model_inputs["attention_mask"].append([1] * len(input_ids))
+            assert len(labels) == len(label_diff_mask), f"labels and label_diff_mask should have the same length, got {len(labels)} and {len(label_diff_mask)}"
             model_inputs["labels"].append(labels)
+            model_inputs["label_diff_mask"].append(label_diff_mask)
 
             # Encode memory texts
             memory_texts = examples.get("_memory", [None])[i] or []

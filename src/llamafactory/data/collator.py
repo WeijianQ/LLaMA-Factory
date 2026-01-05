@@ -276,16 +276,18 @@ class MemoryDataCollator(DataCollatorForSeq2Seq):
     compute_dtype: "torch.dtype" = torch.float32
 
     def __call__(self, features: list[dict[str, Any]]) -> dict[str, "torch.Tensor"]:
-        # Extract memory tensors from features before parent processing
+        # Extract memory tensors and label_diff_mask from features before parent processing
         batch_memory_input_ids = []
         batch_memory_attention_mask = []
+        batch_label_diff_mask = []
         for feature in features:
             memory_input_ids = feature.pop("memory_input_ids", [])
             memory_attention_mask = feature.pop("memory_attention_mask", [])
+            label_diff_mask = feature.pop("label_diff_mask", None)
 
             batch_memory_input_ids.append(memory_input_ids)
             batch_memory_attention_mask.append(memory_attention_mask)
-
+            batch_label_diff_mask.append(label_diff_mask)
         # Collate memory tensors to uniform shape
         # Each memory tensor is [num_memories, mem_len], need to pad to [batch_size, max_num, max_len]
         max_memory_num = max([len(mem) for mem in batch_memory_input_ids])
@@ -346,6 +348,9 @@ class MemoryDataCollator(DataCollatorForSeq2Seq):
         batch_features["memory_input_ids"] = batched_memory_input_ids_tensor
         batch_features["memory_attention_mask"] = batched_memory_attention_mask_tensor
 
+        ## pad label_diff_mask based on labels (left padding to match sequence length)
+        batched_label_diff_mask_tensor = super().__call__([{"input_ids": [], "labels": ldm} for ldm in batch_label_diff_mask])["labels"]
+        batch_features["label_diff_mask"] = batched_label_diff_mask_tensor
         # Create encoding_grad tensor based on task_type
         # reconstruction -> True (keep grad), action/others -> False (detach)
         encoding_grad = torch.tensor(
