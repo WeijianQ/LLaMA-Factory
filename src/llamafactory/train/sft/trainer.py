@@ -17,12 +17,15 @@
 
 import json
 import os
+import random
 from collections import defaultdict
+from collections.abc import Sized
 from types import MethodType
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union, Iterator
 
 import numpy as np
 import torch
+from torch.utils.data import Sampler
 from transformers import Seq2SeqTrainer, Trainer
 from typing_extensions import override
 
@@ -44,6 +47,93 @@ if TYPE_CHECKING:
 from transformers.loss.loss_utils import ForCausalLMLoss
 
 logger = logging.get_logger(__name__)
+
+
+class TwoTaskTypeSampler(Sampler[int]):
+    """Sampler that groups samples by task_type to ensure all ranks have same task_type per step.
+
+    For distributed training with BatchSamplerShard, consecutive world_size batches go to
+    different ranks in the same step. This sampler ensures those batches have the same task_type.
+    """
+    data_source: Sized
+
+    def __init__(
+        self,
+        data_source: Sized,
+        batch_size: int = 1,
+        world_size: int = 1,
+        generator=None,
+    ) -> None:
+        self.data_source = data_source
+        self.batch_size = batch_size
+        self.world_size = world_size
+        self.generator = generator
+
+        # Fast path: use column access for HuggingFace datasets
+        try:
+            task_types = data_source['task_type']
+        except (KeyError, TypeError):
+            task_types = [f.get("task_type", "_") for f in data_source]
+
+        self.reconstruction_indices = [i for i, tt in enumerate(task_types) if tt == "reconstruction"]
+        self.action_indices = [i for i, tt in enumerate(task_types) if tt != "reconstruction"]
+
+        logger.info_rank0(f"TwoTaskTypeSampler: reconstruction={len(self.reconstruction_indices)}, action={len(self.action_indices)}, world_size={world_size}")
+
+    def __iter__(self) -> Iterator[int]:
+        # Create generator for this iteration
+        if self.generator is None:
+            seed = int(torch.empty((), dtype=torch.int64).random_().item())
+            g = torch.Generator()
+            g.manual_seed(seed)
+        else:
+            g = self.generator
+
+        # Shuffle each group
+        recon_perm = torch.randperm(len(self.reconstruction_indices), generator=g)
+        action_perm = torch.randperm(len(self.action_indices), generator=g)
+
+        shuffled_recon = [self.reconstruction_indices[i] for i in recon_perm.tolist()]
+        shuffled_action = [self.action_indices[i] for i in action_perm.tolist()]
+
+        # Build batches from each group
+        recon_batches = []
+        for i in range(0, len(shuffled_recon), self.batch_size):
+            if i + self.batch_size <= len(shuffled_recon):
+                recon_batches.append(shuffled_recon[i:i + self.batch_size])
+
+        action_batches = []
+        for i in range(0, len(shuffled_action), self.batch_size):
+            if i + self.batch_size <= len(shuffled_action):
+                action_batches.append(shuffled_action[i:i + self.batch_size])
+
+        # Group into super batches of size world_size (so all ranks get same task_type)
+        # BatchSamplerShard assigns batch i to rank (i % world_size)
+        # So batches [0, 1, ..., world_size-1] all run in the same step
+        super_batches = []
+
+        # Create super batches from reconstruction
+        for i in range(0, len(recon_batches), self.world_size):
+            if i + self.world_size <= len(recon_batches):
+                super_batches.append(recon_batches[i:i + self.world_size])
+
+        # Create super batches from action
+        for i in range(0, len(action_batches), self.world_size):
+            if i + self.world_size <= len(action_batches):
+                super_batches.append(action_batches[i:i + self.world_size])
+
+        # Shuffle super batch order
+        super_batch_perm = torch.randperm(len(super_batches), generator=g)
+        super_batches = [super_batches[i] for i in super_batch_perm.tolist()]
+
+        # Flatten: super_batch -> batches -> indices
+        for super_batch in super_batches:
+            for batch in super_batch:
+                yield from batch
+
+    def __len__(self) -> int:
+        return len(self.data_source)
+
 
 
 class CustomSeq2SeqTrainer(Seq2SeqTrainer):
@@ -74,6 +164,8 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
         self.finetuning_args = finetuning_args
         self.use_per_seq_loss = getattr(self.finetuning_args, 'use_per_seq_loss', False)
         self.disable_memory_grad_for_action = getattr(self.finetuning_args, 'disable_memory_grad_for_action', False)
+        self.reconstruction_diff_loss = getattr(self.finetuning_args, 'reconstruction_diff_loss', False)
+        self.disable_encoding_backbone_grad = getattr(self.finetuning_args, 'disable_encoding_backbone_grad', True)
         # Initialize metrics storage for per-task-type loss logging
         self._stored_metrics: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
 
@@ -117,29 +209,53 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
         if self.finetuning_args.disable_shuffling:
             return torch.utils.data.SequentialSampler(self.train_dataset)
 
+        # Use TwoTaskTypeSampler for uniform task_type per batch
+        if self.use_per_seq_loss and self.train_dataset is not None:
+            import torch.distributed as dist
+            world_size = dist.get_world_size() if dist.is_initialized() else 1
+            return TwoTaskTypeSampler(
+                data_source=self.train_dataset,
+                batch_size=self.args.per_device_train_batch_size,
+                world_size=world_size,
+            )
+
         return super()._get_train_sampler(*args, **kwargs)
 
     @override
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         """
-        Compute loss with per-sequence normalization.
+        Compute loss with per-sequence normalization and A0 diff-weighted reconstruction loss.
 
         Each sample's loss is first averaged over its valid tokens,
         then these per-sample losses are averaged across the batch.
-        This ensures samples with different label lengths contribute equally.
+
+        For reconstruction samples with label_diff_mask:
+        - 1.0 = diff token, -1.0 = common token
+        - A0 scheme: w_diff = 1.0, w_common = n_diff / n_common (auto-adaptive)
         """
+        # if rank = 0
+        
         if not self.use_per_seq_loss:
             return super().compute_loss(model, inputs, return_outputs=return_outputs, **kwargs)
 
-        # Extract task_type before forward pass (list of strings, not tensor)
+        # Extract task_type and label_diff_mask before forward pass
         batch_task_types = inputs.pop("task_type", None)
+        label_diff_mask = inputs.pop("label_diff_mask", None)
+
+        # from torch.distributed import get_rank
+        # self.rank = get_rank()
+        # if get_rank() == 0 and task_type == "reconstruction":
+        #     from ...debug_utils import wait_for_debugger
+        #     wait_for_debugger()
+        if batch_task_types is not None:
+            # assert all task_types are the same
+            task_type = batch_task_types[0]
+            assert len(set(batch_task_types)) == 1, "All task_types must be the same"
+            # print(f"Rank {self.rank} task_type: {task_type}")
+
         if self.disable_memory_grad_for_action and batch_task_types is not None:
-            disable_memory_grad_tensor = torch.tensor(
-                [tt == "action" for tt in batch_task_types],
-                dtype=torch.bool,
-                device=model.device
-            )
-            inputs["disable_memory_grad_tensor"] = disable_memory_grad_tensor
+            inputs["disable_encoding_adapter_grad"] = task_type != "reconstruction"
+            inputs["disable_encoding_backbone_grad"] = task_type != "reconstruction"
 
         # Forward pass (pop labels to avoid model computing loss internally)
         labels = inputs.pop("labels")
@@ -160,13 +276,44 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
             reduction='none'
         ).view(B, L - 1)  # (B, L-1)
 
-        # Compute valid mask and count per sample
-        valid_mask = (shift_labels != IGNORE_INDEX)  # (B, L-1)
-        valid_cnt = valid_mask.sum(dim=1).clamp_min(1)  # (B,) - clamp to avoid div by 0
+        # Compute valid mask
+        valid_mask = (shift_labels != IGNORE_INDEX).float()  # (B, L-1)
 
-        # Per-sample mean loss (average over valid tokens in each sample)
-        ce_sum_per_sample = (ce_per_token * valid_mask).sum(dim=1)  # (B,)
-        loss_per_sample = ce_sum_per_sample / valid_cnt  # (B,)
+        # Compute weights (A0 scheme for reconstruction, uniform for others)
+        if label_diff_mask is not None and self.reconstruction_diff_loss:
+            # Shift diff mask to align with shifted labels
+            shift_diff_mask = label_diff_mask[..., 1:].contiguous()  # (B, L-1)
+
+            # Identify diff and common tokens (only among valid tokens)
+            is_diff = (shift_diff_mask == 1.0) & (valid_mask == 1.0)      # (B, L-1)
+            is_common = (shift_diff_mask == -1.0) & (valid_mask == 1.0)   # (B, L-1)
+
+            # Count per sample
+            n_diff = is_diff.sum(dim=1, keepdim=True).float()      # (B, 1)
+            n_common = is_common.sum(dim=1, keepdim=True).float()  # (B, 1)
+
+            # A0: alpha = n_diff / n_common (handle div by zero)
+            alpha = torch.where(n_common > 0, n_diff / n_common, torch.ones_like(n_diff))  # (B, 1)
+
+            # Build weights: diff=1.0, common=alpha, other=1.0
+            weights = torch.where(is_diff, torch.ones_like(shift_diff_mask),
+                                  torch.where(is_common, alpha.expand_as(shift_diff_mask),
+                                              torch.ones_like(shift_diff_mask)))  # (B, L-1)
+        else:
+            weights = torch.ones_like(ce_per_token)  # (B, L-1)
+
+        # Weighted loss per sample
+        weighted_ce = ce_per_token * weights * valid_mask  # (B, L-1)
+        weight_sum = (weights * valid_mask).sum(dim=1).clamp_min(1)  # (B,)
+        loss_per_sample = weighted_ce.sum(dim=1) / weight_sum  # (B,)
+
+        # Separate diff and common loss per sample (for logging)
+        if label_diff_mask is not None and self.reconstruction_diff_loss:
+            weighted_ce_diff = ce_per_token * is_diff.float()  # (B, L-1)
+            weighted_ce_common = ce_per_token * is_common.float()  # (B, L-1)
+            loss_diff_per_sample = weighted_ce_diff.sum(dim=1) / is_diff.sum(dim=1).float().clamp_min(1)  # (B,)
+            loss_common_per_sample = weighted_ce_common.sum(dim=1) / is_common.sum(dim=1).float().clamp_min(1)  # (B,)
+
 
         # Average across samples in batch
         loss = loss_per_sample.mean()
@@ -177,6 +324,13 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
                 if tt in ("action", "reconstruction"):
                     self._stored_metrics["train"][f"{tt}_loss"].append(
                         loss_per_sample[i].detach().cpu().item()
+                    )
+                if tt == "reconstruction" and label_diff_mask is not None and self.reconstruction_diff_loss:
+                    self._stored_metrics["train"]["reconstruction_common_loss"].append(
+                        loss_common_per_sample[i].detach().cpu().item()
+                    )
+                    self._stored_metrics["train"]["reconstruction_diff_loss"].append(
+                        loss_diff_per_sample[i].detach().cpu().item()
                     )
 
         return (loss, outputs) if return_outputs else loss

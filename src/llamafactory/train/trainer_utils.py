@@ -533,7 +533,7 @@ def _create_memory_optimizer(
     memory_lr = finetuning_args.memory_lr
 
     # Memory module names to apply different lr
-    memory_module_names = ["memory_projector", "memory_qformer"]
+    memory_module_names = ["memory_projector", "memory_qformer", "memory_norm", "memory_query_tokens"]
 
     decay_param_names = _get_decay_parameter_names(model)
 

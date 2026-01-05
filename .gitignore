@@ -178,3 +178,25 @@ wandb/
 swanlog/
 generated_predictions.jsonl
 predictions_score.json
+
+# Temporary/debug files
+*.pkl
+*.txt
+tmp*.py
+tmp*.json
+debug_*.py
+logs/
+profiles/
+qwen3_*.sh
+run_*.sh
+run_*.py
+test_*.py
+*_debug.sh
+*_profile.sh
+copy_model_files.py
+make_lightweight.py
+upload_to_wandb.py
+verify_tokenized_data.py
+rebuild_flash_attn.sh
+remake_dataset/**/*.json
+remake_dataset/**/*.parquet
