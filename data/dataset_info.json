@@ -1013,5 +1013,33 @@
       "assistant_tag": "assistant",
       "system_tag": "system"
     }
+  },
+  "webarena_inverse_dynamics_mixed": {
+    "file_name": "../remake_dataset/webarena/inverse_dynamics/webarena_inverse_dynamics_mixed.parquet",
+    "formatting": "openai_memory_multiturn",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "webarena_inverse_dynamics_mixed_100": {
+    "file_name": "../remake_dataset/webarena/inverse_dynamics/webarena_inverse_dynamics_mixed_100.parquet",
+    "formatting": "openai_memory_multiturn",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
   }
 }
