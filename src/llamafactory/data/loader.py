@@ -180,6 +180,10 @@ def _get_merged_dataset(
         if (stage == "rm" and dataset_attr.ranking is False) or (stage != "rm" and dataset_attr.ranking is True):
             raise ValueError("The dataset is not applicable in the current training stage.")
 
+        # Auto-detect has_memory from formatting
+        if dataset_attr.formatting in ("openai_memory", "openai_memory_multiturn"):
+            data_args.has_memory = True
+
         datasets[dataset_name] = _load_single_dataset(dataset_attr, model_args, data_args, training_args)
 
     if return_dict:
