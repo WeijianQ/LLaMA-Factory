@@ -6,7 +6,7 @@ enable_cpu_affinity: false
 fsdp_config:
   fsdp_activation_checkpointing: true
   fsdp_auto_wrap_policy: TRANSFORMER_BASED_WRAP
-  fsdp_transformer_layer_cls_to_wrap: Qwen3DecoderLayer
+  fsdp_transformer_layer_cls_to_wrap: Qwen3DecoderLayer,Qwen3_MemoryProjectionLayer,CrossAttentionQFormer
   fsdp_cpu_ram_efficient_loading: true
   fsdp_offload_params: false  # Enable CPU offloading to save GPU memory
   fsdp_reshard_after_forward: true
