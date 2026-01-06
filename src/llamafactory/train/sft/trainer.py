@@ -75,10 +75,12 @@ class TwoTaskTypeSampler(Sampler[int]):
         except (KeyError, TypeError):
             task_types = [f.get("task_type", "_") for f in data_source]
 
-        self.reconstruction_indices = [i for i, tt in enumerate(task_types) if tt == "reconstruction"]
-        self.action_indices = [i for i, tt in enumerate(task_types) if tt != "reconstruction"]
+        # Auxiliary tasks: reconstruction, inverse_dynamics (need encoding grad)
+        AUXILIARY_TASK_TYPES = {"reconstruction", "inverse_dynamics"}
+        self.auxiliary_indices = [i for i, tt in enumerate(task_types) if tt in AUXILIARY_TASK_TYPES]
+        self.action_indices = [i for i, tt in enumerate(task_types) if tt not in AUXILIARY_TASK_TYPES]
 
-        logger.info_rank0(f"TwoTaskTypeSampler: reconstruction={len(self.reconstruction_indices)}, action={len(self.action_indices)}, world_size={world_size}")
+        logger.info_rank0(f"TwoTaskTypeSampler: auxiliary={len(self.auxiliary_indices)}, action={len(self.action_indices)}, world_size={world_size}")
 
     def __iter__(self) -> Iterator[int]:
         # Create generator for this iteration
@@ -90,17 +92,17 @@ class TwoTaskTypeSampler(Sampler[int]):
             g = self.generator
 
         # Shuffle each group
-        recon_perm = torch.randperm(len(self.reconstruction_indices), generator=g)
+        aux_perm = torch.randperm(len(self.auxiliary_indices), generator=g)
         action_perm = torch.randperm(len(self.action_indices), generator=g)
 
-        shuffled_recon = [self.reconstruction_indices[i] for i in recon_perm.tolist()]
+        shuffled_aux = [self.auxiliary_indices[i] for i in aux_perm.tolist()]
         shuffled_action = [self.action_indices[i] for i in action_perm.tolist()]
 
         # Build batches from each group
-        recon_batches = []
-        for i in range(0, len(shuffled_recon), self.batch_size):
-            if i + self.batch_size <= len(shuffled_recon):
-                recon_batches.append(shuffled_recon[i:i + self.batch_size])
+        aux_batches = []
+        for i in range(0, len(shuffled_aux), self.batch_size):
+            if i + self.batch_size <= len(shuffled_aux):
+                aux_batches.append(shuffled_aux[i:i + self.batch_size])
 
         action_batches = []
         for i in range(0, len(shuffled_action), self.batch_size):
@@ -112,10 +114,10 @@ class TwoTaskTypeSampler(Sampler[int]):
         # So batches [0, 1, ..., world_size-1] all run in the same step
         super_batches = []
 
-        # Create super batches from reconstruction
-        for i in range(0, len(recon_batches), self.world_size):
-            if i + self.world_size <= len(recon_batches):
-                super_batches.append(recon_batches[i:i + self.world_size])
+        # Create super batches from auxiliary tasks
+        for i in range(0, len(aux_batches), self.world_size):
+            if i + self.world_size <= len(aux_batches):
+                super_batches.append(aux_batches[i:i + self.world_size])
 
         # Create super batches from action
         for i in range(0, len(action_batches), self.world_size):
@@ -254,8 +256,11 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
             # print(f"Rank {self.rank} task_type: {task_type}")
 
         if self.disable_memory_grad_for_action and batch_task_types is not None:
-            inputs["disable_encoding_adapter_grad"] = task_type != "reconstruction"
-            inputs["disable_encoding_backbone_grad"] = task_type != "reconstruction"
+            # Auxiliary tasks (reconstruction, inverse_dynamics) need encoding grad
+            AUXILIARY_TASK_TYPES = {"reconstruction", "inverse_dynamics"}
+            is_auxiliary = task_type in AUXILIARY_TASK_TYPES
+            inputs["disable_encoding_adapter_grad"] = not is_auxiliary
+            inputs["disable_encoding_backbone_grad"] = not is_auxiliary
 
         # Forward pass (pop labels to avoid model computing loss internally)
         labels = inputs.pop("labels")
@@ -321,7 +326,7 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
         # Store per-task-type losses for logging
         if batch_task_types is not None:
             for i, tt in enumerate(batch_task_types):
-                if tt in ("action", "reconstruction"):
+                if tt in ("action", "reconstruction", "inverse_dynamics"):
                     self._stored_metrics["train"][f"{tt}_loss"].append(
                         loss_per_sample[i].detach().cpu().item()
                     )

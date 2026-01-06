@@ -352,9 +352,10 @@ class MemoryDataCollator(DataCollatorForSeq2Seq):
         batched_label_diff_mask_tensor = super().__call__([{"input_ids": [], "labels": ldm} for ldm in batch_label_diff_mask])["labels"]
         batch_features["label_diff_mask"] = batched_label_diff_mask_tensor
         # Create encoding_grad tensor based on task_type
-        # reconstruction -> True (keep grad), action/others -> False (detach)
+        # auxiliary tasks (reconstruction, inverse_dynamics) -> True (keep grad), action/others -> False (detach)
+        AUXILIARY_TASK_TYPES = {"reconstruction", "inverse_dynamics"}
         encoding_grad = torch.tensor(
-            [task_type == "reconstruction" for task_type in all_task_types],
+            [task_type in AUXILIARY_TASK_TYPES for task_type in all_task_types],
             dtype=torch.bool
         )
         batch_features["encoding_grad"] = encoding_grad
