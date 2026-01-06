@@ -120,11 +120,11 @@ def load_tokenizer(model_args: "ModelArguments") -> "TokenizerModule":
 
     if processor is not None:
         patch_processor(processor, tokenizer, model_args)
-    if model_args.is_memory_model or model_args.is_memory_model_lite:
+    if model_args.memory_model_type is not None:
         processor = None
-    if model_args.is_memory_model_lite:
-        from .tokenizer_utils import patch_tokenizer_for_memory_model_lite
-        patch_tokenizer_for_memory_model_lite(tokenizer, model_args)
+    if model_args.memory_model_type is not None:
+        from .tokenizer_utils import patch_tokenizer_for_memory_model
+        patch_tokenizer_for_memory_model(tokenizer, model_args)
     return {"tokenizer": tokenizer, "processor": processor}
 
 def load_config(model_args: "ModelArguments") -> "PretrainedConfig":
@@ -135,10 +135,34 @@ def load_config(model_args: "ModelArguments") -> "PretrainedConfig":
     temp_config = AutoConfig.from_pretrained(model_args.model_name_or_path, **init_kwargs)
 
     # If it's a Memory model, reload with the correct config class to ensure _no_split_modules is set
-    # if model_args.is_memory_model:
-    #     logger.info("Detected Qwen2_5_Memory model, loading with Qwen2_5_MemoryConfig")
-    #     config_class = _load_memory_model(model_args)["config_class"]
-    #     return config_class.from_pretrained(model_args.model_name_or_path, **init_kwargs)
+    if model_args.memory_model_type == "qformer":
+        import sys
+        import inspect
+        this_file = inspect.getfile(inspect.currentframe())
+        llama_factory_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(this_file))))
+        sys.path.insert(0, llama_factory_root)
+        from hf_models.Qwen3QFormer.configuration_qwen3_memory import Qwen3_MemoryConfig
+        logger.info_rank0("Loading config with Qwen3_MemoryConfig (qformer)")
+        config = Qwen3_MemoryConfig.from_pretrained(model_args.model_name_or_path, **init_kwargs)
+        # Override with model_args
+        config.num_query_tokens = model_args.num_query_tokens
+        config.projection_rank = model_args.projection_rank
+        logger.info_rank0(f"  num_query_tokens: {config.num_query_tokens}")
+        logger.info_rank0(f"  projection_rank: {config.projection_rank}")
+        return config
+    elif model_args.memory_model_type == "lite":
+        import sys
+        import inspect
+        this_file = inspect.getfile(inspect.currentframe())
+        llama_factory_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(this_file))))
+        sys.path.insert(0, llama_factory_root)
+        from hf_models.Qwen3_lite.configuration_qwen3_memory import Qwen3_MemoryConfig
+        logger.info_rank0("Loading config with Qwen3_MemoryConfig (lite)")
+        config = Qwen3_MemoryConfig.from_pretrained(model_args.model_name_or_path, **init_kwargs)
+        # Override with model_args
+        config.num_query_tokens = model_args.num_query_tokens
+        logger.info_rank0(f"  num_query_tokens: {config.num_query_tokens}")
+        return config
 
     return temp_config
 
@@ -153,6 +177,10 @@ def load_model(
     r"""Load pretrained model."""
     init_kwargs = _get_init_kwargs(model_args)
     config = load_config(model_args)
+    # Set memory_pad_token_id from tokenizer for memory models
+    if model_args.memory_model_type is not None and hasattr(tokenizer, "memory_pad_token_id"):
+        config.memory_pad_token_id = tokenizer.memory_pad_token_id
+        logger.info_rank0(f"  memory_pad_token_id: {config.memory_pad_token_id}")
     patch_config(config, tokenizer, model_args, init_kwargs, is_trainable)
     apply_liger_kernel(config, model_args, is_trainable, require_logits=(finetuning_args.stage not in ["pt", "sft"]))
 
@@ -181,7 +209,7 @@ def load_model(
                 load_class = AutoModelForTextToWaveform
             # elif model_args.is_memory_model:
             #     load_class = _load_memory_model(model_args)["model_class"]
-            elif config.architectures[0] == "Qwen3_MemoryForCausalLM":
+            elif model_args.memory_model_type == "qformer":
                 import sys
                 import inspect
                 # This file: src/llamafactory/model/loader.py
@@ -189,10 +217,10 @@ def load_model(
                 this_file = inspect.getfile(inspect.currentframe())
                 llama_factory_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(this_file))))
                 sys.path.insert(0, llama_factory_root)
-                from hf_models.Qwen3.modeling_qwen3_memory import Qwen3_MemoryForCausalLM
+                from hf_models.Qwen3QFormer.modeling_qwen3_memory import Qwen3_MemoryForCausalLM
                 logger.info_rank0(f"Qwen3_MemoryForCausalLM loaded from: {inspect.getfile(Qwen3_MemoryForCausalLM)}")
                 load_class = Qwen3_MemoryForCausalLM
-            elif model_args.is_memory_model_lite:
+            elif model_args.memory_model_type == "lite":
                 import sys
                 import inspect
                 # This file: src/llamafactory/model/loader.py
@@ -203,8 +231,6 @@ def load_model(
                 from hf_models.Qwen3_lite.modeling_qwen3_memory import Qwen3_MemoryForCausalLM
                 logger.info_rank0(f"Qwen3_MemoryForCausalLM loaded from: {inspect.getfile(Qwen3_MemoryForCausalLM)}")
                 load_class = Qwen3_MemoryForCausalLM
-                init_kwargs["num_query_tokens"] = model_args.num_query_tokens
-                init_kwargs["memory_pad_token_id"] = tokenizer.memory_pad_token_id
             else:
                 load_class = AutoModelForCausalLM
 

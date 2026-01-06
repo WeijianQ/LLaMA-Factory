@@ -110,8 +110,8 @@ CHAT_TEMPLATE_QWEN3 = """{#- Memory helper macros -#}
     {%- endif %}
 {%- endif %}"""
 
-def patch_tokenizer_for_memory_model_lite(tokenizer: "PreTrainedTokenizer", model_args: "ModelArguments") -> "PreTrainedTokenizer":
-    r"""Patch tokenizer for memory model lite.
+def patch_tokenizer_for_memory_model(tokenizer: "PreTrainedTokenizer", model_args: "ModelArguments") -> "PreTrainedTokenizer":
+    r"""Patch tokenizer for memory model.
 
     Adds special tokens and chat template for memory model support.
     Based on Qwen3 template, modified to handle memory content.

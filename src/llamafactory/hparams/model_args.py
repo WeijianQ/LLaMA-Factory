@@ -508,19 +508,18 @@ class ModelArguments(
         default=None,
         metadata={"help": "Handcraft device map for model placement. Do not specify it."},
     )
-    is_memory_model: bool = field(
-        default=False,
-        metadata={"help": "Whether the model is a memory model."},
-    )
-    is_memory_model_lite: bool = field(
-        default=False,
-        metadata={"help": "Whether the model is a lite memory model."},
+    memory_model_type: Optional[str] = field(
+        default=None,
+        metadata={"help": "Type of memory model: 'lite' or 'qformer'. None means not a memory model."},
     )
     num_query_tokens: int = field(
         default=1,
         metadata={"help": "The number of query tokens for the memory model."},
     )
-
+    projection_rank: int = field(
+        default=256,
+        metadata={"help": "The projection rank for the qformer memory model."},
+    )
 
     def __post_init__(self):
         BaseModelArguments.__post_init__(self)
