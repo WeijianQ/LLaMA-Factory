@@ -151,7 +151,7 @@ class DataArguments:
         metadata={"help": "Maximum number of memory entries allowed. Examples exceeding this will be dropped."},
     )
     only_predict_last_turn: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Whether to only predict the last assistant turn in multi-turn conversations."},
     )
 
