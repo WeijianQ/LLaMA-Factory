@@ -163,6 +163,21 @@ def load_config(model_args: "ModelArguments") -> "PretrainedConfig":
         config.num_query_tokens = model_args.num_query_tokens
         logger.info_rank0(f"  num_query_tokens: {config.num_query_tokens}")
         return config
+    elif model_args.memory_model_type == "lora_memory":
+        import sys
+        import inspect
+        this_file = inspect.getfile(inspect.currentframe())
+        llama_factory_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(this_file))))
+        sys.path.insert(0, llama_factory_root)
+        from hf_models.Qwen3LoraMemory.configuration_qwen3_memory import Qwen3_MemoryConfig
+        logger.info_rank0("Loading config with Qwen3_MemoryConfig (lora_memory)")
+        config = Qwen3_MemoryConfig.from_pretrained(model_args.model_name_or_path, **init_kwargs)
+        # Override with model_args
+        config.num_query_tokens = model_args.num_query_tokens
+        config.projection_rank = model_args.projection_rank
+        logger.info_rank0(f"  num_query_tokens: {config.num_query_tokens}")
+        logger.info_rank0(f"  projection_rank: {config.projection_rank}")
+        return config
 
     return temp_config
 
@@ -230,6 +245,17 @@ def load_model(
                 sys.path.insert(0, llama_factory_root)
                 from hf_models.Qwen3_lite.modeling_qwen3_memory import Qwen3_MemoryForCausalLM
                 logger.info_rank0(f"Qwen3_MemoryForCausalLM loaded from: {inspect.getfile(Qwen3_MemoryForCausalLM)}")
+                load_class = Qwen3_MemoryForCausalLM
+            elif model_args.memory_model_type == "lora_memory":
+                import sys
+                import inspect
+                # This file: src/llamafactory/model/loader.py
+                # hf_models is at: LLaMA-Factory/hf_models (3 levels up from this file's dir)
+                this_file = inspect.getfile(inspect.currentframe())
+                llama_factory_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(this_file))))
+                sys.path.insert(0, llama_factory_root)
+                from hf_models.Qwen3LoraMemory.modeling_qwen3_memory import Qwen3_MemoryForCausalLM
+                logger.info_rank0(f"Qwen3_MemoryForCausalLM (lora_memory) loaded from: {inspect.getfile(Qwen3_MemoryForCausalLM)}")
                 load_class = Qwen3_MemoryForCausalLM
             else:
                 load_class = AutoModelForCausalLM

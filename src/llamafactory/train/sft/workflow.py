@@ -26,6 +26,7 @@ from ...model import load_model, load_tokenizer
 from ..trainer_utils import create_modelcard_and_push
 from .metric import ComputeAccuracy, ComputeSimilarity, eval_logit_processor
 from .trainer import CustomSeq2SeqTrainer
+from .lora_memory_trainer import LoraMemoryTrainer
 
 from ...debug_utils import wait_for_debugger
 
@@ -105,17 +106,30 @@ def run_sft(
     gen_kwargs["pad_token_id"] = tokenizer.pad_token_id
 
     # Initialize our Trainer
-    trainer = CustomSeq2SeqTrainer(
-        model=model,
-        args=training_args,
-        finetuning_args=finetuning_args,
-        data_collator=data_collator,
-        callbacks=callbacks,
-        gen_kwargs=gen_kwargs,
-        **dataset_module,
-        **tokenizer_module,
-        **metric_module,
-    )
+    if model_args.memory_model_type == "lora_memory":
+        trainer = LoraMemoryTrainer(
+            model=model,
+            args=training_args,
+            finetuning_args=finetuning_args,
+            model_args=model_args,
+            data_collator=data_collator,
+            callbacks=callbacks,
+            **dataset_module,
+            **tokenizer_module,
+            **metric_module,
+        )
+    else:
+        trainer = CustomSeq2SeqTrainer(
+            model=model,
+            args=training_args,
+            finetuning_args=finetuning_args,
+            data_collator=data_collator,
+            callbacks=callbacks,
+            gen_kwargs=gen_kwargs,
+            **dataset_module,
+            **tokenizer_module,
+            **metric_module,
+        )
 
     # Training
     if training_args.do_train:

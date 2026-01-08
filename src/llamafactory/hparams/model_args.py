@@ -510,7 +510,7 @@ class ModelArguments(
     )
     memory_model_type: Optional[str] = field(
         default=None,
-        metadata={"help": "Type of memory model: 'lite' or 'qformer'. None means not a memory model."},
+        metadata={"help": "Type of memory model: 'lite', 'qformer', or 'lora_memory'. None means not a memory model."},
     )
     num_query_tokens: int = field(
         default=1,
