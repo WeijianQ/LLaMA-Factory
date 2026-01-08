@@ -20,23 +20,20 @@ def _setup_freeze_tuning_llm_for_memory(
         return
 
     logger.info_rank0("Fine-tuning method: Freeze LLM for Memory")
-    logger.info_rank0("Freezing causal LLM, only training override_table and embed_head")
+    logger.info_rank0("Freezing causal LLM, only training parameters containing 'memory'")
 
-    # Define trainable module names
-    trainable_module_names = ["memory_projector"]
-    
     # First, freeze all parameters
     for name, param in model.named_parameters():
         param.requires_grad_(False)
-    
-    # Then, unfreeze only override_table and embed_head
+
+    # Then, unfreeze parameters containing "memory" in their name
     trainable_params = []
     seen_param_ids = set()  # Track parameter tensor IDs to avoid counting tied weights twice
     total_trainable_params = 0
 
     for name, param in model.named_parameters():
-        # Check if this parameter belongs to override_table or embed_head
-        if any(module_name in name for module_name in trainable_module_names):
+        # Check if this parameter contains "memory" in its name
+        if "memory" in name:
             param.requires_grad_(True)
             if cast_trainable_params_to_fp32:
                 param.data = param.data.to(torch.float32)
@@ -49,7 +46,7 @@ def _setup_freeze_tuning_llm_for_memory(
 
             trainable_params.append(name)
 
-    logger.info_rank0(f"Set trainable modules: {', '.join(trainable_module_names)}")
+    logger.info_rank0("Set trainable modules: parameters containing 'memory'")
     logger.info_rank0(f"Number of trainable parameter names: {len(trainable_params)}")
     logger.info_rank0(f"Number of unique trainable parameters: {total_trainable_params:,}")
 
