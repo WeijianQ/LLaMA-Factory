@@ -169,14 +169,22 @@ def load_config(model_args: "ModelArguments") -> "PretrainedConfig":
         this_file = inspect.getfile(inspect.currentframe())
         llama_factory_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(this_file))))
         sys.path.insert(0, llama_factory_root)
-        from hf_models.Qwen3LoraMemory.configuration_qwen3_memory import Qwen3_MemoryConfig
-        logger.info_rank0("Loading config with Qwen3_MemoryConfig (lora_memory)")
-        config = Qwen3_MemoryConfig.from_pretrained(model_args.model_name_or_path, **init_kwargs)
+        from hf_models.Qwen3_lora_memory.configuration_qwen3_lora_memory import Qwen3_LoRA_MemoryConfig
+        logger.info_rank0("Loading config with Qwen3_LoRA_MemoryConfig (lora_memory, built-in LoRA)")
+        config = Qwen3_LoRA_MemoryConfig.from_pretrained(model_args.model_name_or_path, **init_kwargs)
         # Override with model_args
         config.num_query_tokens = model_args.num_query_tokens
         config.projection_rank = model_args.projection_rank
+        # LoRA config can be overridden if needed
+        if hasattr(model_args, 'lora_rank') and model_args.lora_rank is not None:
+            config.lora_rank = model_args.lora_rank
+        if hasattr(model_args, 'lora_alpha') and model_args.lora_alpha is not None:
+            config.lora_alpha = model_args.lora_alpha
         logger.info_rank0(f"  num_query_tokens: {config.num_query_tokens}")
         logger.info_rank0(f"  projection_rank: {config.projection_rank}")
+        logger.info_rank0(f"  lora_rank: {config.lora_rank}")
+        logger.info_rank0(f"  lora_alpha: {config.lora_alpha}")
+        logger.info_rank0(f"  lora_target_modules: {config.lora_target_modules}")
         return config
 
     return temp_config
@@ -254,9 +262,9 @@ def load_model(
                 this_file = inspect.getfile(inspect.currentframe())
                 llama_factory_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(this_file))))
                 sys.path.insert(0, llama_factory_root)
-                from hf_models.Qwen3LoraMemory.modeling_qwen3_memory import Qwen3_MemoryForCausalLM
-                logger.info_rank0(f"Qwen3_MemoryForCausalLM (lora_memory) loaded from: {inspect.getfile(Qwen3_MemoryForCausalLM)}")
-                load_class = Qwen3_MemoryForCausalLM
+                from hf_models.Qwen3_lora_memory.modeling_qwen3_lora_memory import Qwen3_LoRA_MemoryForCausalLM
+                logger.info_rank0(f"Qwen3_LoRA_MemoryForCausalLM (built-in LoRA) loaded from: {inspect.getfile(Qwen3_LoRA_MemoryForCausalLM)}")
+                load_class = Qwen3_LoRA_MemoryForCausalLM
             else:
                 load_class = AutoModelForCausalLM
 

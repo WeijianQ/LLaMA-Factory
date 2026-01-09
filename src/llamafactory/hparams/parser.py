@@ -355,18 +355,19 @@ def get_train_args(args: Optional[Union[dict[str, Any], list[str]]] = None) -> _
     _verify_model_args(model_args, data_args, finetuning_args)
     _check_extra_dependencies(model_args, finetuning_args, training_args)
 
-    # lora_memory requires finetuning_type=lora and adds memory modules to additional_target
+    # lora_memory <-> custom_lora mutual requirement
     if model_args.memory_model_type == "lora_memory":
-        if finetuning_args.finetuning_type != "lora":
-            raise ValueError("memory_model_type='lora_memory' requires finetuning_type='lora'.")
-
-        memory_modules = {"memory_query_tokens", "memory_projector"}
-        if finetuning_args.additional_target is not None:
-            existing_targets = set(finetuning_args.additional_target)
-            finetuning_args.additional_target = list(existing_targets | memory_modules)
-        else:
-            finetuning_args.additional_target = list(memory_modules)
-        logger.info_rank0(f"lora_memory: added {memory_modules} to additional_target: {finetuning_args.additional_target}")
+        if finetuning_args.finetuning_type != "custom_lora":
+            raise NotImplementedError(
+                "memory_model_type='lora_memory' requires finetuning_type='custom_lora'. "
+                "This model has built-in LoRA and bypasses PEFT."
+            )
+    if finetuning_args.finetuning_type == "custom_lora":
+        if model_args.memory_model_type != "lora_memory":
+            raise NotImplementedError(
+                "finetuning_type='custom_lora' requires memory_model_type='lora_memory'. "
+                "custom_lora is only for models with built-in LoRA."
+            )
 
     if (
         training_args.do_train

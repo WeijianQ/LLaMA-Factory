@@ -281,6 +281,50 @@ def _setup_lora_tuning(
     return model
 
 
+def _setup_builtin_lora_memory(
+    model: "PreTrainedModel",
+    model_args: "ModelArguments",
+    is_trainable: bool,
+    cast_trainable_params_to_fp32: bool,
+) -> "PreTrainedModel":
+    """Setup for models with built-in LoRA (e.g., Qwen3_LoRA_MemoryForCausalLM).
+
+    This skips PEFT and uses the model's internal LoRA layers.
+    Freezes base model, trains only LoRA + memory components.
+    """
+    if not is_trainable:
+        return model
+
+    logger.info_rank0("Fine-tuning method: Built-in LoRA Memory (no PEFT)")
+
+    # Freeze all parameters first
+    for param in model.parameters():
+        param.requires_grad = False
+
+    # Enable training for LoRA parameters (lora_A, lora_B)
+    lora_params = 0
+    for name, param in model.named_parameters():
+        if "lora_A" in name or "lora_B" in name:
+            param.requires_grad = True
+            if cast_trainable_params_to_fp32:
+                param.data = param.data.to(torch.float32)
+            lora_params += param.numel()
+
+    # Enable training for memory components
+    memory_params = 0
+    for name, param in model.named_parameters():
+        if "memory_query_tokens" in name or "memory_projector" in name:
+            param.requires_grad = True
+            if cast_trainable_params_to_fp32:
+                param.data = param.data.to(torch.float32)
+            memory_params += param.numel()
+
+    logger.info_rank0(f"  Trainable LoRA params: {lora_params:,}")
+    logger.info_rank0(f"  Trainable memory params: {memory_params:,}")
+
+    return model
+
+
 def init_adapter(
     config: "PretrainedConfig",
     model: "PreTrainedModel",
@@ -294,6 +338,17 @@ def init_adapter(
 
     Note that the trainable parameters must be cast to float32.
     """
+    # Built-in LoRA for lora_memory model (bypasses PEFT)
+    # Requires: --finetuning_type custom_lora --memory_model_type lora_memory
+    if model_args.memory_model_type == "lora_memory":
+        if finetuning_args.finetuning_type != "custom_lora":
+            raise ValueError(
+                "lora_memory model requires --finetuning_type custom_lora. "
+                "This model has built-in LoRA and bypasses PEFT."
+            )
+        cast_trainable_params_to_fp32 = is_trainable and not finetuning_args.pure_bf16
+        return _setup_builtin_lora_memory(model, model_args, is_trainable, cast_trainable_params_to_fp32)
+
     if is_trainable and getattr(model, "quantization_method", None) is not None:
         if finetuning_args.finetuning_type not in ["lora", "oft"]:
             raise ValueError("Quantized models can only be used for the LoRA or OFT tuning.")

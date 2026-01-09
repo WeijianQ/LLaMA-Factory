@@ -461,9 +461,9 @@ class FinetuningArguments(
         default="sft",
         metadata={"help": "Which stage will be performed in training."},
     )
-    finetuning_type: Literal["lora", "oft", "freeze", "full", "freeze_llm_for_memory"] = field(
+    finetuning_type: Literal["lora", "oft", "freeze", "full", "freeze_llm_for_memory", "custom_lora"] = field(
         default="lora",
-        metadata={"help": "Which fine-tuning method to use."},
+        metadata={"help": "Which fine-tuning method to use. custom_lora: built-in LoRA for lora_memory model."},
     )
     use_llama_pro: bool = field(
         default=False,
@@ -578,7 +578,9 @@ class FinetuningArguments(
         self.apollo_target: list[str] = split_arg(self.apollo_target)
         self.use_ref_model = self.stage == "dpo" and self.pref_loss not in ["orpo", "simpo"]
 
-        assert self.finetuning_type in ["lora", "oft", "freeze", "full", "freeze_llm_for_memory"], "Invalid fine-tuning method."
+        assert self.finetuning_type in ["lora", "oft", "freeze", "full", "freeze_llm_for_memory", "custom_lora"], "Invalid fine-tuning method."
+        # Note: custom_lora requires memory_model_type=lora_memory, validated in parser.py
+
         assert self.ref_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."
         assert self.reward_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."
 
